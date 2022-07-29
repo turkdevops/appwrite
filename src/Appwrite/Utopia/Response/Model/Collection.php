@@ -16,36 +16,78 @@ class Collection extends Model
                 'default' => '',
                 'example' => '5e5ea5c16897e',
             ])
-            ->addRule('$permissions', [
-                'type' => Response::MODEL_PERMISSIONS,
-                'description' => 'Collection permissions.',
-                'default' => new \stdClass,
-                'example' => new \stdClass,
-                'array' => false,
-            ])
-            ->addRule('name', [
-                'type' => self::TYPE_STRING,
-                'description' => 'Collection name.',
-                'default' => '',
-                'example' => 'Movies',
-            ])
-            ->addRule('dateCreated', [
+            ->addRule('$createdAt', [
                 'type' => self::TYPE_INTEGER,
                 'description' => 'Collection creation date in Unix timestamp.',
                 'default' => 0,
                 'example' => 1592981250,
             ])
-            ->addRule('dateUpdated', [
+            ->addRule('$updatedAt', [
                 'type' => self::TYPE_INTEGER,
-                'description' => 'Collection creation date in Unix timestamp.',
+                'description' => 'Collection update date in Unix timestamp.',
                 'default' => 0,
-                'example' => 1592981550,
+                'example' => 1592981250,
             ])
-            ->addRule('rules', [
-                'type' => Response::MODEL_RULE,
-                'description' => 'Collection rules.',
+            ->addRule('$read', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Collection read permissions.',
+                'default' => '',
+                'example' => 'role:all',
+                'array' => true
+            ])
+            ->addRule('$write', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Collection write permissions.',
+                'default' => '',
+                'example' => 'user:608f9da25e7e1',
+                'array' => true
+            ])
+            ->addRule('databaseId', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Database ID.',
+                'default' => '',
+                'example' => '5e5ea5c16897e',
+            ])
+            ->addRule('name', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Collection name.',
+                'default' => '',
+                'example' => 'My Collection',
+            ])
+            ->addRule('enabled', [
+                'type' => self::TYPE_BOOLEAN,
+                'description' => 'Collection enabled.',
+                'default' => true,
+                'example' => false,
+            ])
+            ->addRule('permission', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Collection permission model. Possible values: `document` or `collection`',
+                'default' => '',
+                'example' => 'document',
+            ])
+            ->addRule('attributes', [
+                'type' => [
+                    Response::MODEL_ATTRIBUTE_BOOLEAN,
+                    Response::MODEL_ATTRIBUTE_INTEGER,
+                    Response::MODEL_ATTRIBUTE_FLOAT,
+                    Response::MODEL_ATTRIBUTE_EMAIL,
+                    Response::MODEL_ATTRIBUTE_ENUM,
+                    Response::MODEL_ATTRIBUTE_URL,
+                    Response::MODEL_ATTRIBUTE_IP,
+                    Response::MODEL_ATTRIBUTE_STRING, // needs to be last, since its condition would dominate any other string attribute
+                ],
+                'description' => 'Collection attributes.',
                 'default' => [],
+                'example' => new \stdClass(),
                 'array' => true,
+            ])
+            ->addRule('indexes', [
+                'type' => Response::MODEL_INDEX,
+                'description' => 'Collection indexes.',
+                'default' => [],
+                'example' => new \stdClass(),
+                'array' => true
             ])
         ;
     }
@@ -55,17 +97,17 @@ class Collection extends Model
      *
      * @return string
      */
-    public function getName():string
+    public function getName(): string
     {
         return 'Collection';
     }
 
     /**
-     * Get Collection
+     * Get Type
      *
      * @return string
      */
-    public function getType():string
+    public function getType(): string
     {
         return Response::MODEL_COLLECTION;
     }

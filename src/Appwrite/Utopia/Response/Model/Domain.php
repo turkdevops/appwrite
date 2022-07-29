@@ -11,7 +11,7 @@ class Domain extends Model
      * @var bool
      */
     protected $public = false;
-    
+
     public function __construct()
     {
         $this
@@ -20,6 +20,18 @@ class Domain extends Model
                 'description' => 'Domain ID.',
                 'default' => '',
                 'example' => '5e5ea5c16897e',
+            ])
+            ->addRule('$createdAt', [
+                'type' => self::TYPE_INTEGER,
+                'description' => 'Domain creation date in Unix timestamp.',
+                'default' => 0,
+                'example' => 1592981250,
+            ])
+            ->addRule('$updatedAt', [
+                'type' => self::TYPE_INTEGER,
+                'description' => 'Domain update date in Unix timestamp.',
+                'default' => 0,
+                'example' => 1592981250,
             ])
             ->addRule('domain', [
                 'type' => self::TYPE_STRING,
@@ -59,17 +71,17 @@ class Domain extends Model
      *
      * @return string
      */
-    public function getName():string
+    public function getName(): string
     {
         return 'Domain';
     }
 
     /**
-     * Get Collection
+     * Get Type
      *
      * @return string
      */
-    public function getType():string
+    public function getType(): string
     {
         return Response::MODEL_DOMAIN;
     }

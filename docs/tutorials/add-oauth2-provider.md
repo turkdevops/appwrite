@@ -76,83 +76,99 @@ use Appwrite\Auth\OAuth2;
 
 class [PROVIDER NAME] extends OAuth2
 {
-    /**
-     * @var string
-     */
-    private $endpoint = '[ENDPOINT API URL]';
-    
-    /**
-     * @return string
-     */
+    private string $endpoint = '[ENDPOINT API URL]';
+    protected array $user = [];
+    protected array $tokens = [];
+    protected array $scopes = [
+        // [ARRAY_OF_REQUIRED_SCOPES]
+    ];
+
     public function getName(): string
     {
         return '[PROVIDER NAME]';
     }
 
-    /**
-     * @return string
-     */
     public function getLoginURL(): string
     {
         $url = $this->endpoint . '[LOGIN_URL_STUFF]';
         return $url;
     }
 
-    /**
-     * @param string $code
-     *
-     * @return string
-     */
-    public function getAccessToken(string $code): string
+    protected function getTokens(string $code): array
     {
-        // TODO: Fire request to oauth API to generate access_token
-        $accessToken = "[FETCHED ACCESS TOKEN]";
-        
-        return $accessToken;
+        if (empty($this->tokens)) {
+            // TODO: Fire request to oauth API to generate access_token
+            // Make sure to use '$this->getScopes()' to include all scopes properly
+            $this->tokens = ["[FETCH TOKEN RESPONSE]"];
+        }
+
+        return $this->tokens;
     }
 
-    /**
-     * @param string $accessToken
-     *
-     * @return string
-     */
+    public function refreshTokens(string $refreshToken): array
+    {
+        // TODO: Fire request to oauth API to generate access_token using refresh token
+        $this->tokens = ["[FETCH TOKEN RESPONSE]"];
+
+        return $this->tokens;
+    }
+
     public function getUserID(string $accessToken): string
     {
-        // TODO: Fetch user from oauth API and select the user ID
-        $userId = "[FETCHED USER ID]";
-        
+        $user = $this->getUser($accessToken);
+
+        // TODO: Pick user ID from $user response
+        $userId = "[USER ID]";
+
         return $userId;
     }
 
-    /**
-     * @param string $accessToken
-     *
-     * @return string
-     */
     public function getUserEmail(string $accessToken): string
     {
-        // TODO: Fetch user from oauth API and select the user's email
-        $userEmail = "[FETCHED USER EMAIL]";
-        
+        $user = $this->getUser($accessToken);
+
+        // TODO: Pick user email from $user response
+        $userEmail = "[USER EMAIL]";
+
         return $userEmail;
     }
 
-    /**
-     * @param string $accessToken
-     *
-     * @return string
-     */
+    public function isEmailVerified(string $accessToken): bool
+    {
+        $user = $this->getUser($accessToken);
+
+        // TODO: Pick user verification status from $user response
+        $isVerified = "[USER VERIFICATION STATUS]";
+
+        return $isVerified;
+    }
+
     public function getUserName(string $accessToken): string
     {
-        // TODO: Fetch user from oauth API and select the username
-        $username = "[FETCHED USERNAME]";
-        
+        $user = $this->getUser($accessToken);
+
+        // TODO: Pick username from $user response
+        $username = "[USERNAME]";
+
         return $username;
     }
+
+    protected function getUser(string $accessToken): array
+    {
+        if (empty($this->user)) {
+            // TODO: Fire request to oauth API to get information about users
+            $this->user = "[FETCH USER RESPONSE]";
+        }
+
+        return $this->user;
+    }
 }
+
 ```
 
 > If you copy this template, make sure to replace all placeholders wrapped like `[THIS]` and to implement everything marked as `TODO:`.
+
+> If your OAuth2 provider has different endpoints for getting username/email/id, you can fire specific requests from specific get-method, and stop using `getUser` method.
 
 Please mention in your documentation what resources or API docs you used to implement the provider's OAuth2 protocol.
 
@@ -160,7 +176,7 @@ Please mention in your documentation what resources or API docs you used to impl
 
 After you finished adding your new provider to Appwrite, you should be able to see it in your Appwrite console. Navigate to 'Project > Users > Providers' and check your new provider's settings form.
 
-> To start Appwrite console from the source code, you can simply run `docker-compose up -d'.
+> To start Appwrite console from the source code, you can simply run `docker compose up -d'.
 
 Add credentials and check both a successful and a failed login (where the user denies integration on the provider page).
 
@@ -175,4 +191,34 @@ If everything goes well, raise a pull request and be ready to respond to any fee
 First of all, commit the changes with the message `Added XXX OAuth2 Provider` and push it. This will publish a new branch to your forked version of Appwrite. If you visit it at `github.com/YOUR_USERNAME/appwrite`, you will see a new alert saying you are ready to submit a pull request. Follow the steps GitHub provides, and at the end, you will have your pull request submitted.
 
 ## 🤕 Stuck ?
-If you need any help with the contribution, feel free to head over to [our discord channel](https://appwrite.io/discord) and we'll be happy to help you out.
+
+If you need any help with the contribution, feel free to head over to [our Discord channel](https://appwrite.io/discord) and we'll be happy to help you out.
+
+## 😉 Need more freedom
+
+If your OAuth provider requires special configuration apart from `clientId` and `clientSecret` you can create a custom form. Currently this is being realized through putting all custom fields as JSON into the `clientSecret` field to keep the project API stable. You can implement your custom form following these steps:
+
+1. Add your custom form in `app/views/console/users/oauth/[PROVIDER].phtml`. Below is a template you can use. Add the filename to `app/config/providers.php`.
+
+```php
+<?php
+$provider = $this->getParam('provider', '');
+?>
+<label for="oauth2<?php echo $this->escape(ucfirst($provider)); ?>Appid">Application (Client) ID<span class="tooltip" data-tooltip="Provided by AzureAD"><i class="icon-info-circled"></i></span></label>
+<input name="appId" id="oauth2<?php echo $this->escape(ucfirst($provider)); ?>Appid" type="text" autocomplete="off" data-ls-bind="{{console-project.provider<?php echo $this->escape(ucfirst($provider)); ?>Appid}}" placeholder="Application ID" />
+<?php /*Hidden input for the final secret. Gets filled with a JSON via JS. */ ?>
+<input name="secret" data-forms-oauth-custom="<?php echo $this->escape(ucfirst($provider)); ?>" id="oauth2<?php echo $this->escape(ucfirst($provider)); ?>Secret" type="hidden" autocomplete="off" data-ls-bind="{{console-project.provider<?php echo $this->escape(ucfirst($provider)); ?>Secret}}" />
+<!-- [Your custom form inputs go here] -->
+```
+
+2. Add the config for creating the JSON in `public/scripts/views/forms/oauth-custom.js` using this template
+```js
+{
+    "[Provider]":{
+        "[JSON property name 1]":"[html element Id 1]",
+        "[JSON property name 2]":"[html element Id 2]"
+    }
+}
+```
+
+3. In your provider class `src/Appwrite/Auth/OAuth2/[Provider].php` add logic to decode the JSON using the same property names.

@@ -4,6 +4,8 @@ namespace Appwrite\Utopia\Response\Model;
 
 use Appwrite\Utopia\Response;
 use Appwrite\Utopia\Response\Model;
+use stdClass;
+use Utopia\Database\Document;
 
 class Func extends Model
 {
@@ -16,12 +18,24 @@ class Func extends Model
                 'default' => '',
                 'example' => '5e5ea5c16897e',
             ])
-            ->addRule('$permissions', [
-                'type' => Response::MODEL_PERMISSIONS,
-                'description' => 'Function permissions.',
-                'default' => new \stdClass,
-                'example' => new \stdClass,
-                'array' => false,
+            ->addRule('$createdAt', [
+                'type' => self::TYPE_INTEGER,
+                'description' => 'Function creation date in Unix timestamp.',
+                'default' => 0,
+                'example' => 1592981250,
+            ])
+            ->addRule('$updatedAt', [
+                'type' => self::TYPE_INTEGER,
+                'description' => 'Function update date in Unix timestamp.',
+                'default' => 0,
+                'example' => 1592981250,
+            ])
+            ->addRule('execute', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Execution permissions.',
+                'default' => [],
+                'example' => 'role:member',
+                'array' => true,
             ])
             ->addRule('name', [
                 'type' => self::TYPE_STRING,
@@ -29,21 +43,9 @@ class Func extends Model
                 'default' => '',
                 'example' => 'My Function',
             ])
-            ->addRule('dateCreated', [
-                'type' => self::TYPE_INTEGER,
-                'description' => 'Function creation date in Unix timestamp.',
-                'default' => 0,
-                'example' => 1592981250,
-            ])
-            ->addRule('dateUpdated', [
-                'type' => self::TYPE_INTEGER,
-                'description' => 'Function update date in Unix timestamp.',
-                'default' => 0,
-                'example' => 1592981257,
-            ])
             ->addRule('status', [
                 'type' => self::TYPE_STRING,
-                'description' => 'Function status. Possible values: disabled, enabled',
+                'description' => 'Function status. Possible values: `disabled`, `enabled`',
                 'default' => '',
                 'example' => 'enabled',
             ])
@@ -53,16 +55,16 @@ class Func extends Model
                 'default' => '',
                 'example' => 'python-3.8',
             ])
-            ->addRule('tag', [
+            ->addRule('deployment', [
                 'type' => self::TYPE_STRING,
-                'description' => 'Function active tag ID.',
+                'description' => 'Function\'s active deployment ID.',
                 'default' => '',
                 'example' => '5e5ea5c16897e',
             ])
             ->addRule('vars', [
                 'type' => self::TYPE_JSON,
                 'description' => 'Function environment variables.',
-                'default' => new \stdClass,
+                'default' => new \stdClass(),
                 'example' => ['key' => 'value'],
             ])
             ->addRule('events', [
@@ -104,18 +106,39 @@ class Func extends Model
      *
      * @return string
      */
-    public function getName():string
+    public function getName(): string
     {
         return 'Function';
     }
 
     /**
-     * Get Collection
+     * Get Type
      *
      * @return string
      */
-    public function getType():string
+    public function getType(): string
     {
         return Response::MODEL_FUNCTION;
+    }
+
+    /**
+     * Filter Function
+     *
+     * Automatically converts a [] default to a stdClass, this is called while grabbing the document.
+     *
+     * @param Document $document
+     * @return Document
+     */
+    public function filter(Document $document): Document
+    {
+        $vars = $document->getAttribute('vars');
+        if ($vars instanceof Document) {
+            $vars = $vars->getArrayCopy();
+        }
+
+        if (is_array($vars) && empty($vars)) {
+            $document->setAttribute('vars', new stdClass());
+        }
+        return $document;
     }
 }

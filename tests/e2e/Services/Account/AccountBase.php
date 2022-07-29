@@ -6,9 +6,9 @@ use Tests\E2E\Client;
 
 trait AccountBase
 {
-    public function testCreateAccount():array
+    public function testCreateAccount(): array
     {
-        $email = uniqid().'user@localhost.test';
+        $email = uniqid() . 'user@localhost.test';
         $password = 'password';
         $name = 'User Name';
 
@@ -20,6 +20,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => $email,
             'password' => $password,
             'name' => $name,
@@ -42,6 +43,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => $email,
             'password' => $password,
             'name' => $name,
@@ -54,6 +56,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => '',
             'password' => '',
         ]);
@@ -65,6 +68,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => $email,
             'password' => '',
         ]);
@@ -76,6 +80,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => '',
             'password' => $password,
         ]);
@@ -93,7 +98,7 @@ trait AccountBase
     /**
      * @depends testCreateAccount
      */
-    public function testCreateAccountSession($data):array
+    public function testCreateAccountSession($data): array
     {
         $email = $data['email'] ?? '';
         $password = $data['password'] ?? '';
@@ -101,7 +106,7 @@ trait AccountBase
         /**
          * Test for SUCCESS
          */
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -113,21 +118,7 @@ trait AccountBase
         $this->assertEquals($response['headers']['status-code'], 201);
 
         $sessionId = $response['body']['$id'];
-        $session = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_'.$this->getProject()['$id']];
-
-        /**
-         * Test for FAILURE
-         */
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
-            'origin' => 'http://localhost',
-            'content-type' => 'application/json',
-            'x-appwrite-project' => $this->getProject()['$id'],
-        ]), [
-            'email' => $email.'x',
-            'password' => $password,
-        ]);
-
-        $this->assertEquals($response['headers']['status-code'], 401);
+        $session = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_' . $this->getProject()['$id']];
 
         $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
             'origin' => 'http://localhost',
@@ -135,12 +126,37 @@ trait AccountBase
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
             'email' => $email,
-            'password' => $password.'x',
+            'password' => $password,
+        ]);
+
+        $this->assertEquals($response['headers']['status-code'], 201);
+
+        /**
+         * Test for FAILURE
+         */
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ]), [
+            'email' => $email . 'x',
+            'password' => $password,
         ]);
 
         $this->assertEquals($response['headers']['status-code'], 401);
 
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ]), [
+            'email' => $email,
+            'password' => $password . 'x',
+        ]);
+
+        $this->assertEquals($response['headers']['status-code'], 401);
+
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -160,7 +176,7 @@ trait AccountBase
     /**
      * @depends testCreateAccountSession
      */
-    public function testGetAccount($data):array
+    public function testGetAccount($data): array
     {
         $email = $data['email'] ?? '';
         $name = $data['name'] ?? '';
@@ -173,7 +189,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 200);
@@ -195,7 +211,7 @@ trait AccountBase
 
         $response = $this->client->call(Client::METHOD_GET, '/account', [
             'content-type' => 'application/json',
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session.'xx',
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session . 'xx',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]);
 
@@ -207,7 +223,7 @@ trait AccountBase
     /**
      * @depends testCreateAccountSession
      */
-    public function testGetAccountPrefs($data):array
+    public function testGetAccountPrefs($data): array
     {
         $session = $data['session'] ?? '';
 
@@ -218,7 +234,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 200);
@@ -243,7 +259,7 @@ trait AccountBase
     /**
      * @depends testCreateAccountSession
      */
-    public function testGetAccountSessions($data):array
+    public function testGetAccountSessions($data): array
     {
         $session = $data['session'] ?? '';
         $sessionId = $data['sessionId'] ?? '';
@@ -255,16 +271,16 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 200);
         $this->assertIsArray($response['body']);
         $this->assertNotEmpty($response['body']);
         $this->assertCount(2, $response['body']);
-        $this->assertEquals(1, $response['body']['sum']);
+        $this->assertEquals(2, $response['body']['total']);
         $this->assertEquals($sessionId, $response['body']['sessions'][0]['$id']);
-        
+
         $this->assertEquals('Windows', $response['body']['sessions'][0]['osName']);
         $this->assertEquals('WIN', $response['body']['sessions'][0]['osCode']);
         $this->assertEquals('10', $response['body']['sessions'][0]['osVersion']);
@@ -278,10 +294,10 @@ trait AccountBase
         $this->assertEquals('', $response['body']['sessions'][0]['deviceBrand']);
         $this->assertEquals('', $response['body']['sessions'][0]['deviceModel']);
         $this->assertEquals($response['body']['sessions'][0]['ip'], filter_var($response['body']['sessions'][0]['ip'], FILTER_VALIDATE_IP));
-        
+
         $this->assertEquals('--', $response['body']['sessions'][0]['countryCode']);
         $this->assertEquals('Unknown', $response['body']['sessions'][0]['countryName']);
-        
+
         $this->assertEquals(true, $response['body']['sessions'][0]['current']);
 
         /**
@@ -301,11 +317,12 @@ trait AccountBase
     /**
      * @depends testCreateAccountSession
      */
-    public function testGetAccountLogs($data):array
+    public function testGetAccountLogs($data): array
     {
         sleep(10);
         $session = $data['session'] ?? '';
-
+        $sessionId = $data['sessionId'] ?? '';
+        $userId = $data['id'] ?? '';
         /**
          * Test for SUCCESS
          */
@@ -313,37 +330,15 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 200);
         $this->assertIsArray($response['body']['logs']);
         $this->assertNotEmpty($response['body']['logs']);
-        $this->assertCount(2, $response['body']['logs']);
-        
-        $this->assertContains($response['body']['logs'][0]['event'], ['account.create', 'account.sessions.create']);
-        $this->assertEquals($response['body']['logs'][0]['ip'], filter_var($response['body']['logs'][0]['ip'], FILTER_VALIDATE_IP));
-        $this->assertIsNumeric($response['body']['logs'][0]['time']);
-
-        $this->assertEquals('Windows', $response['body']['logs'][0]['osName']);
-        $this->assertEquals('WIN', $response['body']['logs'][0]['osCode']);
-        $this->assertEquals('10', $response['body']['logs'][0]['osVersion']);
-
-        $this->assertEquals('browser', $response['body']['logs'][0]['clientType']);
-        $this->assertEquals('Chrome', $response['body']['logs'][0]['clientName']);
-        $this->assertEquals('CH', $response['body']['logs'][0]['clientCode']);
-        $this->assertEquals('70.0', $response['body']['logs'][0]['clientVersion']);
-        $this->assertEquals('Blink', $response['body']['logs'][0]['clientEngine']);
-
-        $this->assertEquals('desktop', $response['body']['logs'][0]['deviceName']);
-        $this->assertEquals('', $response['body']['logs'][0]['deviceBrand']);
-        $this->assertEquals('', $response['body']['logs'][0]['deviceModel']);
-        $this->assertEquals($response['body']['logs'][0]['ip'], filter_var($response['body']['logs'][0]['ip'], FILTER_VALIDATE_IP));
-        
-        $this->assertEquals('--', $response['body']['logs'][0]['countryCode']);
-        $this->assertEquals('Unknown', $response['body']['logs'][0]['countryName']);
-
-        $this->assertContains($response['body']['logs'][1]['event'], ['account.create', 'account.sessions.create']);
+        $this->assertCount(3, $response['body']['logs']);
+        $this->assertIsNumeric($response['body']['total']);
+        $this->assertContains($response['body']['logs'][1]['event'], ["users.{$userId}.create", "users.{$userId}.sessions.{$sessionId}.create"]);
         $this->assertEquals($response['body']['logs'][1]['ip'], filter_var($response['body']['logs'][1]['ip'], FILTER_VALIDATE_IP));
         $this->assertIsNumeric($response['body']['logs'][1]['time']);
 
@@ -361,10 +356,83 @@ trait AccountBase
         $this->assertEquals('', $response['body']['logs'][1]['deviceBrand']);
         $this->assertEquals('', $response['body']['logs'][1]['deviceModel']);
         $this->assertEquals($response['body']['logs'][1]['ip'], filter_var($response['body']['logs'][1]['ip'], FILTER_VALIDATE_IP));
-        
+
         $this->assertEquals('--', $response['body']['logs'][1]['countryCode']);
         $this->assertEquals('Unknown', $response['body']['logs'][1]['countryName']);
-        
+
+        $this->assertContains($response['body']['logs'][2]['event'], ["users.{$userId}.create", "users.{$userId}.sessions.{$sessionId}.create"]);
+        $this->assertEquals($response['body']['logs'][2]['ip'], filter_var($response['body']['logs'][2]['ip'], FILTER_VALIDATE_IP));
+        $this->assertIsNumeric($response['body']['logs'][2]['time']);
+
+        $this->assertEquals('Windows', $response['body']['logs'][2]['osName']);
+        $this->assertEquals('WIN', $response['body']['logs'][2]['osCode']);
+        $this->assertEquals('10', $response['body']['logs'][2]['osVersion']);
+
+        $this->assertEquals('browser', $response['body']['logs'][2]['clientType']);
+        $this->assertEquals('Chrome', $response['body']['logs'][2]['clientName']);
+        $this->assertEquals('CH', $response['body']['logs'][2]['clientCode']);
+        $this->assertEquals('70.0', $response['body']['logs'][2]['clientVersion']);
+        $this->assertEquals('Blink', $response['body']['logs'][2]['clientEngine']);
+
+        $this->assertEquals('desktop', $response['body']['logs'][2]['deviceName']);
+        $this->assertEquals('', $response['body']['logs'][2]['deviceBrand']);
+        $this->assertEquals('', $response['body']['logs'][2]['deviceModel']);
+        $this->assertEquals($response['body']['logs'][2]['ip'], filter_var($response['body']['logs'][2]['ip'], FILTER_VALIDATE_IP));
+
+        $this->assertEquals('--', $response['body']['logs'][2]['countryCode']);
+        $this->assertEquals('Unknown', $response['body']['logs'][2]['countryName']);
+
+        $responseLimit = $this->client->call(Client::METHOD_GET, '/account/logs', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'limit' => 1
+        ]);
+
+        $this->assertEquals($responseLimit['headers']['status-code'], 200);
+        $this->assertIsArray($responseLimit['body']['logs']);
+        $this->assertNotEmpty($responseLimit['body']['logs']);
+        $this->assertCount(1, $responseLimit['body']['logs']);
+        $this->assertIsNumeric($responseLimit['body']['total']);
+
+        $this->assertEquals($response['body']['logs'][0], $responseLimit['body']['logs'][0]);
+
+        $responseOffset = $this->client->call(Client::METHOD_GET, '/account/logs', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'offset' => 1
+        ]);
+
+        $this->assertEquals($responseOffset['headers']['status-code'], 200);
+        $this->assertIsArray($responseOffset['body']['logs']);
+        $this->assertNotEmpty($responseOffset['body']['logs']);
+        $this->assertCount(2, $responseOffset['body']['logs']);
+        $this->assertIsNumeric($responseOffset['body']['total']);
+
+        $this->assertEquals($response['body']['logs'][1], $responseOffset['body']['logs'][0]);
+
+        $responseLimitOffset = $this->client->call(Client::METHOD_GET, '/account/logs', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'limit' => 1,
+            'offset' => 1
+        ]);
+
+        $this->assertEquals($responseLimitOffset['headers']['status-code'], 200);
+        $this->assertIsArray($responseLimitOffset['body']['logs']);
+        $this->assertNotEmpty($responseLimitOffset['body']['logs']);
+        $this->assertCount(1, $responseLimitOffset['body']['logs']);
+        $this->assertIsNumeric($responseLimitOffset['body']['total']);
+
+        $this->assertEquals($response['body']['logs'][1], $responseLimitOffset['body']['logs'][0]);
         /**
          * Test for FAILURE
          */
@@ -379,16 +447,16 @@ trait AccountBase
         return $data;
     }
 
-    //TODO Add tests for OAuth2 session creation
+    // TODO Add tests for OAuth2 session creation
 
     /**
      * @depends testCreateAccountSession
      */
-    public function testUpdateAccountName($data):array
+    public function testUpdateAccountName($data): array
     {
         $email = $data['email'] ?? '';
         $session = $data['session'] ?? '';
-        $newName = 'New Name';
+        $newName = 'Lorem';
 
         /**
          * Test for SUCCESS
@@ -397,7 +465,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'name' => $newName
         ]);
@@ -420,26 +488,25 @@ trait AccountBase
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 401);
-        
+
         $response = $this->client->call(Client::METHOD_PATCH, '/account/name', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
-        ]), [
-        ]);
-        
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), []);
+
         $this->assertEquals($response['headers']['status-code'], 400);
 
         $response = $this->client->call(Client::METHOD_PATCH, '/account/name', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'name' => 'ocSRq1d3QphHivJyUmYY7WMnrxyjdk5YvVwcDqx2zS0coxESN8RmsQwLWw5Whnf0WbVohuFWTRAaoKgCOO0Y0M7LwgFnZmi8881Y72222222222222222222222222222'
         ]);
-        
+
         $this->assertEquals($response['headers']['status-code'], 400);
 
         $data['name'] = $newName;
@@ -450,7 +517,7 @@ trait AccountBase
     /**
      * @depends testUpdateAccountName
      */
-    public function testUpdateAccountPassword($data):array
+    public function testUpdateAccountPassword($data): array
     {
         $email = $data['email'] ?? '';
         $password = $data['password'] ?? '';
@@ -463,7 +530,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'password' => 'new-password',
             'oldPassword' => $password,
@@ -475,9 +542,8 @@ trait AccountBase
         $this->assertNotEmpty($response['body']['$id']);
         $this->assertIsNumeric($response['body']['registration']);
         $this->assertEquals($response['body']['email'], $email);
-        $this->assertEquals($response['body']['name'], 'New Name');
 
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -498,15 +564,13 @@ trait AccountBase
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 401);
-        
         $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
-        ]), [
-        ]);
-        
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), []);
+
         $this->assertEquals($response['headers']['status-code'], 400);
 
         /**
@@ -516,7 +580,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'password' => 'new-password',
             'oldPassword' => $password,
@@ -524,13 +588,13 @@ trait AccountBase
         $this->assertEquals($response['headers']['status-code'], 401);
 
         /**
-         * Existing user tries to update password without passing old password -> SHOULD FAIL 
+         * Existing user tries to update password without passing old password -> SHOULD FAIL
          */
         $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'password' => 'new-password'
         ]);
@@ -544,9 +608,9 @@ trait AccountBase
     /**
      * @depends testUpdateAccountPassword
      */
-    public function testUpdateAccountEmail($data):array
+    public function testUpdateAccountEmail($data): array
     {
-        $newEmail = uniqid().'new@localhost.test';
+        $newEmail = uniqid() . 'new@localhost.test';
         $session = $data['session'] ?? '';
 
         /**
@@ -556,7 +620,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'email' => $newEmail,
             'password' => 'new-password',
@@ -568,7 +632,6 @@ trait AccountBase
         $this->assertNotEmpty($response['body']['$id']);
         $this->assertIsNumeric($response['body']['registration']);
         $this->assertEquals($response['body']['email'], $newEmail);
-        $this->assertEquals($response['body']['name'], 'New Name');
 
         /**
          * Test for FAILURE
@@ -580,15 +643,14 @@ trait AccountBase
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 401);
-        
+
         $response = $this->client->call(Client::METHOD_PATCH, '/account/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
-        ]), [
-        ]);
-        
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), []);
+
         $this->assertEquals($response['headers']['status-code'], 400);
 
         // Test if we can create a new account with the old email
@@ -601,6 +663,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' =>  $data['email'],
             'password' =>  $data['password'],
             'name' =>  $data['name'],
@@ -611,8 +674,8 @@ trait AccountBase
         $this->assertNotEmpty($response['body']['$id']);
         $this->assertIsNumeric($response['body']['registration']);
         $this->assertEquals($response['body']['email'], $data['email']);
-        $this->assertEquals($response['body']['name'], $data['name'],);
-        
+        $this->assertEquals($response['body']['name'], $data['name']);
+
 
         $data['email'] = $newEmail;
 
@@ -622,9 +685,9 @@ trait AccountBase
     /**
      * @depends testUpdateAccountEmail
      */
-    public function testUpdateAccountPrefs($data):array
+    public function testUpdateAccountPrefs($data): array
     {
-        $newEmail = uniqid().'new@localhost.test';
+        $newEmail = uniqid() . 'new@localhost.test';
         $session = $data['session'] ?? '';
 
         /**
@@ -634,7 +697,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'prefs' => [
                 'prefKey1' => 'prefValue1',
@@ -658,40 +721,70 @@ trait AccountBase
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 401);
-        
+
         $response = $this->client->call(Client::METHOD_PATCH, '/account/prefs', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'prefs' => '{}'
         ]);
 
         $this->assertEquals($response['headers']['status-code'], 400);
-        
-        
+
+
         $response = $this->client->call(Client::METHOD_PATCH, '/account/prefs', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'prefs' => '[]'
         ]);
 
         $this->assertEquals($response['headers']['status-code'], 400);
-        
+
         $response = $this->client->call(Client::METHOD_PATCH, '/account/prefs', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'prefs' => '{"test": "value"}'
         ]);
 
         $this->assertEquals($response['headers']['status-code'], 400);
+
+        /**
+         * Prefs size exceeded
+         */
+        $prefsObject = ["longValue" => str_repeat("🍰", 100000)];
+
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/prefs', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'prefs' => $prefsObject
+        ]);
+
+        $this->assertEquals(400, $response['headers']['status-code']);
+
+        // Now let's test the same thing, but with normal symbol instead of multi-byte cake emoji
+        $prefsObject = ["longValue" => str_repeat("-", 100000)];
+
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/prefs', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'prefs' => $prefsObject
+        ]);
+
+        $this->assertEquals(400, $response['headers']['status-code']);
 
         return $data;
     }
@@ -699,7 +792,7 @@ trait AccountBase
     /**
      * @depends testUpdateAccountPrefs
      */
-    public function testCreateAccountVerification($data):array
+    public function testCreateAccountVerification($data): array
     {
         $email = $data['email'] ?? '';
         $name = $data['name'] ?? '';
@@ -712,8 +805,8 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
-            
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+
         ]), [
             'url' => 'http://localhost/verification',
         ]);
@@ -731,15 +824,15 @@ trait AccountBase
 
         $verification = substr($lastEmail['text'], strpos($lastEmail['text'], '&secret=', 0) + 8, 256);
 
-        $expireTime = strpos($lastEmail['text'], 'expire='.$response['body']['expire'], 0);
+        $expireTime = strpos($lastEmail['text'], 'expire=' . $response['body']['expire'], 0);
 
         $this->assertNotFalse($expireTime);
-        
-        $secretTest = strpos($lastEmail['text'], 'secret='.$response['body']['secret'], 0);
+
+        $secretTest = strpos($lastEmail['text'], 'secret=' . $response['body']['secret'], 0);
 
         $this->assertNotFalse($secretTest);
 
-        $userIDTest = strpos($lastEmail['text'], 'userId='.$response['body']['userId'], 0);
+        $userIDTest = strpos($lastEmail['text'], 'userId=' . $response['body']['userId'], 0);
 
         $this->assertNotFalse($userIDTest);
 
@@ -750,7 +843,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'url' => 'localhost/verification',
         ]);
@@ -761,7 +854,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'url' => 'http://remotehost/verification',
         ]);
@@ -776,12 +869,12 @@ trait AccountBase
     /**
      * @depends testCreateAccountVerification
      */
-    public function testUpdateAccountVerification($data):array
+    public function testUpdateAccountVerification($data): array
     {
         $id = $data['id'] ?? '';
         $session = $data['session'] ?? '';
         $verification = $data['verification'] ?? '';
-        
+
         /**
          * Test for SUCCESS
          */
@@ -789,14 +882,14 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'userId' => $id,
             'secret' => $verification,
         ]);
 
         $this->assertEquals(200, $response['headers']['status-code']);
-        
+
         /**
          * Test for FAILURE
          */
@@ -804,7 +897,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'userId' => 'ewewe',
             'secret' => $verification,
@@ -816,7 +909,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]), [
             'userId' => $id,
             'secret' => 'sdasdasdasd',
@@ -830,7 +923,7 @@ trait AccountBase
     /**
      * @depends testUpdateAccountVerification
      */
-    public function testDeleteAccountSession($data):array
+    public function testDeleteAccountSession($data): array
     {
         $email = $data['email'] ?? '';
         $password = $data['password'] ?? '';
@@ -839,7 +932,7 @@ trait AccountBase
         /**
          * Test for SUCCESS
          */
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -849,7 +942,7 @@ trait AccountBase
         ]);
 
         $sessionNewId = $response['body']['$id'];
-        $sessionNew = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_'.$this->getProject()['$id']];
+        $sessionNew = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_' . $this->getProject()['$id']];
 
         $this->assertEquals($response['headers']['status-code'], 201);
 
@@ -857,16 +950,16 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $sessionNew,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $sessionNew,
         ]);
 
         $this->assertEquals($response['headers']['status-code'], 200);
 
-        $response = $this->client->call(Client::METHOD_DELETE, '/account/sessions/'.$sessionNewId, array_merge([
+        $response = $this->client->call(Client::METHOD_DELETE, '/account/sessions/' . $sessionNewId, array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $sessionNew,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $sessionNew,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 204);
@@ -875,7 +968,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 200);
@@ -887,7 +980,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $sessionNew,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $sessionNew,
         ]);
 
         $this->assertEquals($response['headers']['status-code'], 401);
@@ -898,7 +991,7 @@ trait AccountBase
     /**
      * @depends testUpdateAccountVerification
      */
-    public function testDeleteAccountSessionCurrent($data):array
+    public function testDeleteAccountSessionCurrent($data): array
     {
         $email = $data['email'] ?? '';
         $password = $data['password'] ?? '';
@@ -906,7 +999,7 @@ trait AccountBase
         /**
          * Test for SUCCESS
          */
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -915,14 +1008,14 @@ trait AccountBase
             'password' => $password,
         ]);
 
-        $sessionNew = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_'.$this->getProject()['$id']];
+        $sessionNew = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_' . $this->getProject()['$id']];
 
         $this->assertEquals($response['headers']['status-code'], 201);
 
         $response = $this->client->call(Client::METHOD_GET, '/account', [
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $sessionNew,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $sessionNew,
             'x-appwrite-project' => $this->getProject()['$id'],
         ]);
 
@@ -931,7 +1024,7 @@ trait AccountBase
         $response = $this->client->call(Client::METHOD_DELETE, '/account/sessions/current', [
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $sessionNew,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $sessionNew,
             'x-appwrite-project' => $this->getProject()['$id'],
         ]);
 
@@ -943,7 +1036,7 @@ trait AccountBase
         $response = $this->client->call(Client::METHOD_GET, '/account', [
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $sessionNew,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $sessionNew,
             'x-appwrite-project' => $this->getProject()['$id'],
         ]);
 
@@ -955,7 +1048,7 @@ trait AccountBase
     /**
      * @depends testUpdateAccountVerification
      */
-    public function testDeleteAccountSessions($data):array
+    public function testDeleteAccountSessions($data): array
     {
         $session = $data['session'] ?? '';
 
@@ -966,7 +1059,7 @@ trait AccountBase
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
-            'cookie' => 'a_session_'.$this->getProject()['$id'].'=' . $session,
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
         ]));
 
         $this->assertEquals($response['headers']['status-code'], 204);
@@ -988,7 +1081,7 @@ trait AccountBase
         $email = $data['email'] ?? '';
         $password = $data['password'] ?? '';
 
-        $response = $this->client->call(Client::METHOD_POST, '/account/sessions', array_merge([
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
             'origin' => 'http://localhost',
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -997,7 +1090,7 @@ trait AccountBase
             'password' => $password,
         ]);
 
-        $data['session'] = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_'.$this->getProject()['$id']];
+        $data['session'] = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_' . $this->getProject()['$id']];
 
         return $data;
     }
@@ -1005,7 +1098,7 @@ trait AccountBase
     /**
      * @depends testDeleteAccountSession
      */
-    public function testCreateAccountRecovery($data):array
+    public function testCreateAccountRecovery($data): array
     {
         $email = $data['email'] ?? '';
         $name = $data['name'] ?? '';
@@ -1035,15 +1128,15 @@ trait AccountBase
 
         $recovery = substr($lastEmail['text'], strpos($lastEmail['text'], '&secret=', 0) + 8, 256);
 
-        $expireTime = strpos($lastEmail['text'], 'expire='.$response['body']['expire'], 0);
+        $expireTime = strpos($lastEmail['text'], 'expire=' . $response['body']['expire'], 0);
 
         $this->assertNotFalse($expireTime);
-        
-        $secretTest = strpos($lastEmail['text'], 'secret='.$response['body']['secret'], 0);
+
+        $secretTest = strpos($lastEmail['text'], 'secret=' . $response['body']['secret'], 0);
 
         $this->assertNotFalse($secretTest);
 
-        $userIDTest = strpos($lastEmail['text'], 'userId='.$response['body']['userId'], 0);
+        $userIDTest = strpos($lastEmail['text'], 'userId=' . $response['body']['userId'], 0);
 
         $this->assertNotFalse($userIDTest);
 
@@ -1091,12 +1184,12 @@ trait AccountBase
     /**
      * @depends testCreateAccountRecovery
      */
-    public function testUpdateAccountRecovery($data):array
+    public function testUpdateAccountRecovery($data): array
     {
         $id = $data['id'] ?? '';
         $recovery = $data['recovery'] ?? '';
         $newPassowrd = 'test-recovery';
-        
+
         /**
          * Test for SUCCESS
          */
@@ -1112,7 +1205,7 @@ trait AccountBase
         ]);
 
         $this->assertEquals(200, $response['headers']['status-code']);
-        
+
         /**
          * Test for FAILURE
          */
@@ -1149,18 +1242,18 @@ trait AccountBase
         ]), [
             'userId' => $id,
             'secret' => $recovery,
-            'password' => $newPassowrd.'x',
+            'password' => $newPassowrd . 'x',
             'passwordAgain' => $newPassowrd,
         ]);
 
         $this->assertEquals(400, $response['headers']['status-code']);
-        
+
         return $data;
     }
 
-    public function testCreateMagicUrl():array
+    public function testCreateMagicUrl(): array
     {
-        $email = \time().'user@appwrite.io';
+        $email = \time() . 'user@appwrite.io';
 
         /**
          * Test for SUCCESS
@@ -1170,6 +1263,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => $email,
             // 'url' => 'http://localhost/magiclogin',
         ]);
@@ -1187,15 +1281,15 @@ trait AccountBase
 
         $token = substr($lastEmail['text'], strpos($lastEmail['text'], '&secret=', 0) + 8, 256);
 
-        $expireTime = strpos($lastEmail['text'], 'expire='.$response['body']['expire'], 0);
+        $expireTime = strpos($lastEmail['text'], 'expire=' . $response['body']['expire'], 0);
 
         $this->assertNotFalse($expireTime);
-        
-        $secretTest = strpos($lastEmail['text'], 'secret='.$response['body']['secret'], 0);
+
+        $secretTest = strpos($lastEmail['text'], 'secret=' . $response['body']['secret'], 0);
 
         $this->assertNotFalse($secretTest);
 
-        $userIDTest = strpos($lastEmail['text'], 'userId='.$response['body']['userId'], 0);
+        $userIDTest = strpos($lastEmail['text'], 'userId=' . $response['body']['userId'], 0);
 
         $this->assertNotFalse($userIDTest);
 
@@ -1207,6 +1301,7 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => $email,
             'url' => 'localhost/magiclogin',
         ]);
@@ -1218,14 +1313,26 @@ trait AccountBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ]), [
+            'userId' => 'unique()',
             'email' => $email,
             'url' => 'http://remotehost/magiclogin',
         ]);
 
         $this->assertEquals(400, $response['headers']['status-code']);
 
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/magic-url', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ]), [
+            'email' => $email,
+        ]);
+
+        $this->assertEquals(400, $response['headers']['status-code']);
+
         $data['token'] = $token;
         $data['id'] = $userId;
+        $data['email'] = $email;
 
         return $data;
     }
@@ -1233,11 +1340,12 @@ trait AccountBase
     /**
      * @depends testCreateMagicUrl
      */
-    public function testCreateSessionWithMagicUrl($data):array
+    public function testCreateSessionWithMagicUrl($data): array
     {
         $id = $data['id'] ?? '';
         $token = $data['token'] ?? '';
-        
+        $email = $data['email'] ?? '';
+
         /**
          * Test for SUCCESS
          */
@@ -1255,7 +1363,24 @@ trait AccountBase
         $this->assertNotEmpty($response['body']);
         $this->assertNotEmpty($response['body']['$id']);
         $this->assertNotEmpty($response['body']['userId']);
-        
+
+        $sessionId = $response['body']['$id'];
+        $session = $this->client->parseCookie((string)$response['headers']['set-cookie'])['a_session_' . $this->getProject()['$id']];
+
+        $response = $this->client->call(Client::METHOD_GET, '/account', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]));
+
+        $this->assertEquals($response['headers']['status-code'], 200);
+        $this->assertNotEmpty($response['body']);
+        $this->assertNotEmpty($response['body']['$id']);
+        $this->assertIsNumeric($response['body']['registration']);
+        $this->assertEquals($response['body']['email'], $email);
+        $this->assertTrue($response['body']['emailVerification']);
+
         /**
          * Test for FAILURE
          */
@@ -1280,7 +1405,101 @@ trait AccountBase
         ]);
 
         $this->assertEquals(401, $response['headers']['status-code']);
-        
+
+
+        $data['sessionId'] = $sessionId;
+        $data['session'] = $session;
+
+        return $data;
+    }
+
+    /**
+     * @depends testCreateSessionWithMagicUrl
+     */
+    public function testUpdateAccountPasswordWithMagicUrl($data): array
+    {
+        $email = $data['email'] ?? '';
+        $session = $data['session'] ?? '';
+
+        /**
+         * Test for SUCCESS
+         */
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'password' => 'new-password'
+        ]);
+
+        $this->assertEquals($response['headers']['status-code'], 200);
+        $this->assertIsArray($response['body']);
+        $this->assertNotEmpty($response['body']);
+        $this->assertNotEmpty($response['body']['$id']);
+        $this->assertIsNumeric($response['body']['registration']);
+        $this->assertEquals($response['body']['email'], $email);
+
+        $response = $this->client->call(Client::METHOD_POST, '/account/sessions/email', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ]), [
+            'email' => $email,
+            'password' => 'new-password',
+        ]);
+
+        $this->assertEquals($response['headers']['status-code'], 201);
+
+        /**
+         * Test for FAILURE
+         */
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ]));
+
+        $this->assertEquals($response['headers']['status-code'], 401);
+
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), []);
+
+        $this->assertEquals($response['headers']['status-code'], 400);
+
+        /**
+         * Existing user tries to update password by passing wrong old password -> SHOULD FAIL
+         */
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'password' => 'new-password',
+            'oldPassword' => 'wrong-password',
+        ]);
+        $this->assertEquals($response['headers']['status-code'], 401);
+
+        /**
+         * Existing user tries to update password without passing old password -> SHOULD FAIL
+         */
+        $response = $this->client->call(Client::METHOD_PATCH, '/account/password', array_merge([
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+            'cookie' => 'a_session_' . $this->getProject()['$id'] . '=' . $session,
+        ]), [
+            'password' => 'new-password'
+        ]);
+        $this->assertEquals($response['headers']['status-code'], 401);
+
+        $data['password'] = 'new-password';
+
         return $data;
     }
 }

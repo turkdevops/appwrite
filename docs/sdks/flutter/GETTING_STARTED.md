@@ -10,11 +10,14 @@ If you are building your Flutter application for multiple devices, you have to f
 ### Android
 For **Android** first add your app <u>name</u> and <u>package name</u>, Your package name is generally the **applicationId** in your app-level <a href="https://github.com/appwrite/playground-for-flutter/blob/0fdbdff98384fff940ed0b1e08cf14cfe3a2be3e/android/app/build.gradle#L41" target="_blank" rel="noopener">build.gradle</a> file. By registering your new app platform, you are allowing your app to communicate with the Appwrite API.
 
-In order to capture the Appwrite OAuth callback url, the following activity needs to be added to your [AndroidManifest.xml](https://github.com/appwrite/playground-for-flutter/blob/master/android/app/src/main/AndroidManifest.xml). Be sure to replace the **[PROJECT_ID]** string with your actual Appwrite project ID. You can find your Appwrite project ID in your project settings screen in the console.
+In order to capture the Appwrite OAuth callback url, the following activity needs to be added inside the `<application>` tag, along side the existing `<activity>` tags in your [AndroidManifest.xml](https://github.com/appwrite/playground-for-flutter/blob/master/android/app/src/main/AndroidManifest.xml). Be sure to replace the **[PROJECT_ID]** string with your actual Appwrite project ID. You can find your Appwrite project ID in your project settings screen in the console.
 
 ```xml
-<manifest>
-    <application>
+<manifest ...>
+    ....
+    <application ...>
+        ....
+        <!-- Add this inside the <application> tag, along side the existing <activity> tags -->
         <activity android:name="com.linusu.flutter_web_auth.CallbackActivity" >
             <intent-filter android:label="flutter_web_auth">
                 <action android:name="android.intent.action.VIEW" />
@@ -46,6 +49,23 @@ For **Mac OS** add your app name and Bundle ID, You can find your Bundle Identif
 ### Web
 Appwrite 0.7, and the Appwrite Flutter SDK 0.3.0 have added support for Flutter Web. To build web apps that integrate with Appwrite successfully, all you have to do is add a web platform on your Appwrite project's dashboard and list the domain your website will use to allow communication to the Appwrite API.
 
+For web in order to capture the OAuth2 callback URL and send it to the application using JavaScript `postMessage()`, you need to create an html file inside `./web` folder of your Flutter project. For example `auth.html` with the following content.
+
+```html
+<!DOCTYPE html>
+<title>Authentication complete</title>
+<p>Authentication is complete. If this does not happen automatically, please
+close the window.
+<script>
+  window.opener.postMessage({
+    flutter-web-auth: window.location.href
+  }, window.location.origin);
+  window.close();
+</script>
+```
+
+Redirection URL passed to the authentication service must be the same as the URL on which the application is running (schema, host, port if necessary) and the path must point to created HTML file, /auth.html in this case. The callbackUrlScheme parameter of the authenticate() method does not take into account, so it is possible to use a schema for native platforms in the code.
+
 #### Flutter Web Cross-Domain Communication & Cookies
 While running Flutter Web, make sure your Appwrite server and your Flutter client are using the same top-level domain and the same protocol (HTTP or HTTPS) to communicate. When trying to communicate between different domains or protocols, you may receive HTTP status error 401 because some modern browsers block cross-site or insecure cookies for enhanced privacy. In production, Appwrite allows you set multiple [custom-domains](https://appwrite.io/docs/custom-domains) for each project.
 
@@ -58,14 +78,16 @@ For **Windows** add your app <u>name</u> and <u>package name</u>, Your package n
 
 ```dart
 import 'package:appwrite/appwrite.dart';
-Client client = Client();
 
+void main() {
+  Client client = Client();
 
-client
-  .setEndpoint('https://localhost/v1') // Your Appwrite Endpoint
-  .setProject('5e8cf4f46b5e8') // Your project ID
-  .setSelfSigned() // Use only on dev mode with a self-signed SSL cert
-;
+  client
+    .setEndpoint('https://localhost/v1') // Your Appwrite Endpoint
+    .setProject('5e8cf4f46b5e8') // Your project ID
+    .setSelfSigned() // Use only on dev mode with a self-signed SSL cert
+  ;
+}
 ```
 
 Before starting to send any API calls to your new Appwrite instance, make sure your Android or iOS emulators has network access to the Appwrite server hostname or IP address.
@@ -81,6 +103,7 @@ When trying to connect to Appwrite from an emulator or a mobile device, localhos
 Account account = Account(client);
 Response user = await account
   .create(
+    userId: '[USER_ID]',
     email: 'me@appwrite.io',
     password: 'password',
     name: 'My Name'
@@ -91,25 +114,29 @@ Response user = await account
 
 ```dart
 import 'package:appwrite/appwrite.dart';
-Client client = Client();
+
+void main() {
+  Client client = Client();
 
 
-client
-  .setEndpoint('https://localhost/v1') // Your Appwrite Endpoint
-  .setProject('5e8cf4f46b5e8') // Your project ID
-  .setSelfSigned() // Use only on dev mode with a self-signed SSL cert
-  ;
+  client
+    .setEndpoint('https://localhost/v1') // Your Appwrite Endpoint
+    .setProject('5e8cf4f46b5e8') // Your project ID
+    .setSelfSigned() // Use only on dev mode with a self-signed SSL cert
+    ;
 
 
-// Register User
-Account account = Account(client);
+  // Register User
+  Account account = Account(client);
 
-Response user = await account
-  .create(
-    email: 'me@appwrite.io',
-    password: 'password',
-    name: 'My Name'
-  );
+  Response user = await account
+    .create(
+      userId: '[USER_ID]',
+      email: 'me@appwrite.io',
+      password: 'password',
+      name: 'My Name'
+    );
+}
 ```
 
 ### Error Handling
@@ -119,7 +146,7 @@ The Appwrite Flutter SDK raises `AppwriteException` object with `message`, `code
 Users users = Users(client);
 
 try {
-  final response = await users.create(email: ‘email@example.com’,password: ‘password’, name: ‘name’);
+  final response = await users.create(userId: '[USER_ID]', email: ‘email@example.com’,password: ‘password’, name: ‘name’);
   print(response.data);
 } on AppwriteException catch(e) {
   //show message to user or do other operation based on error as required
