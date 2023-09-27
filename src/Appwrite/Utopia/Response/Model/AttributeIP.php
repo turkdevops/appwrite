@@ -3,7 +3,6 @@
 namespace Appwrite\Utopia\Response\Model;
 
 use Appwrite\Utopia\Response;
-use Appwrite\Utopia\Response\Model\Attribute;
 
 class AttributeIP extends Attribute
 {
@@ -29,16 +28,13 @@ class AttributeIP extends Attribute
                 'description' => 'String format.',
                 'default' => APP_DATABASE_ATTRIBUTE_IP,
                 'example' => APP_DATABASE_ATTRIBUTE_IP,
-                'array' => false,
-                'require' => true,
             ])
             ->addRule('default', [
                 'type' => self::TYPE_STRING,
                 'description' => 'Default value for attribute when not provided. Cannot be set when attribute is required.',
                 'default' => null,
+                'required' => false,
                 'example' => '192.0.2.0',
-                'array' => false,
-                'require' => false,
             ])
         ;
     }

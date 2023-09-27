@@ -28,6 +28,12 @@ class Attribute extends Model
                 'default' => '',
                 'example' => 'available',
             ])
+            ->addRule('error', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Error message. Displays error generated on failure of creating or deleting an attribute.',
+                'default' => '',
+                'example' => 'string',
+            ])
             ->addRule('required', [
                 'type' => self::TYPE_BOOLEAN,
                 'description' => 'Is attribute required?',
@@ -38,8 +44,8 @@ class Attribute extends Model
                 'type' => self::TYPE_BOOLEAN,
                 'description' => 'Is attribute an array?',
                 'default' => false,
+                'required' => false,
                 'example' => false,
-                'require' => false
             ])
         ;
     }

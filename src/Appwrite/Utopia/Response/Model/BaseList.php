@@ -2,7 +2,6 @@
 
 namespace Appwrite\Utopia\Response\Model;
 
-use Appwrite\Utopia\Response;
 use Appwrite\Utopia\Response\Model;
 
 class BaseList extends Model
@@ -10,12 +9,12 @@ class BaseList extends Model
     /**
      * @var string
      */
-    protected $name = '';
+    protected string $name = '';
 
     /**
      * @var string
      */
-    protected $type = '';
+    protected string $type = '';
 
     /**
      * @param string $name
@@ -35,7 +34,7 @@ class BaseList extends Model
             $namesWithCap = [
                 'documents', 'collections', 'users', 'files', 'buckets', 'functions',
                 'deployments', 'executions', 'projects', 'webhooks', 'keys',
-                'platforms', 'domains', 'memberships', 'teams'
+                'platforms', 'rules', 'memberships', 'teams'
             ];
 
             if (\in_array($name, $namesWithCap)) {

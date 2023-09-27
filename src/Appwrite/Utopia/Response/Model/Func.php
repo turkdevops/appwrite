@@ -19,22 +19,22 @@ class Func extends Model
                 'example' => '5e5ea5c16897e',
             ])
             ->addRule('$createdAt', [
-                'type' => self::TYPE_INTEGER,
-                'description' => 'Function creation date in Unix timestamp.',
-                'default' => 0,
-                'example' => 1592981250,
+                'type' => self::TYPE_DATETIME,
+                'description' => 'Function creation date in ISO 8601 format.',
+                'default' => '',
+                'example' => self::TYPE_DATETIME_EXAMPLE,
             ])
             ->addRule('$updatedAt', [
-                'type' => self::TYPE_INTEGER,
-                'description' => 'Function update date in Unix timestamp.',
-                'default' => 0,
-                'example' => 1592981250,
+                'type' => self::TYPE_DATETIME,
+                'description' => 'Function update date in ISO 8601 format.',
+                'default' => '',
+                'example' => self::TYPE_DATETIME_EXAMPLE,
             ])
             ->addRule('execute', [
                 'type' => self::TYPE_STRING,
                 'description' => 'Execution permissions.',
                 'default' => [],
-                'example' => 'role:member',
+                'example' => 'users',
                 'array' => true,
             ])
             ->addRule('name', [
@@ -43,11 +43,23 @@ class Func extends Model
                 'default' => '',
                 'example' => 'My Function',
             ])
-            ->addRule('status', [
-                'type' => self::TYPE_STRING,
-                'description' => 'Function status. Possible values: `disabled`, `enabled`',
-                'default' => '',
-                'example' => 'enabled',
+            ->addRule('enabled', [
+                'type' => self::TYPE_BOOLEAN,
+                'description' => 'Function enabled.',
+                'default' => true,
+                'example' => false,
+            ])
+            ->addRule('live', [
+                'type' => self::TYPE_BOOLEAN,
+                'description' => 'Is the function deployed with the latest configuration? This is set to false if you\'ve changed an environment variables, entrypoint, commands, or other settings that needs redeploy to be applied. When the value is false, redeploy the function to update it with the latest configuration.',
+                'default' => true,
+                'example' => false,
+            ])
+            ->addRule('logging', [
+                'type' => self::TYPE_BOOLEAN,
+                'description' => 'Whether executions will be logged. When set to false, executions will not be logged, but will reduce resource used by your Appwrite project.',
+                'default' => true,
+                'example' => false,
             ])
             ->addRule('runtime', [
                 'type' => self::TYPE_STRING,
@@ -62,10 +74,11 @@ class Func extends Model
                 'example' => '5e5ea5c16897e',
             ])
             ->addRule('vars', [
-                'type' => self::TYPE_JSON,
-                'description' => 'Function environment variables.',
-                'default' => new \stdClass(),
-                'example' => ['key' => 'value'],
+                'type' => Response::MODEL_VARIABLE,
+                'description' => 'Function variables.',
+                'default' => [],
+                'example' => [],
+                'array' => true
             ])
             ->addRule('events', [
                 'type' => self::TYPE_STRING,
@@ -80,23 +93,59 @@ class Func extends Model
                 'default' => '',
                 'example' => '5 4 * * *',
             ])
-            ->addRule('scheduleNext', [
-                'type' => self::TYPE_INTEGER,
-                'description' => 'Function next scheduled execution date in Unix timestamp.',
-                'default' => 0,
-                'example' => 1592981292,
-            ])
-            ->addRule('schedulePrevious', [
-                'type' => self::TYPE_INTEGER,
-                'description' => 'Function next scheduled execution date in Unix timestamp.',
-                'default' => 0,
-                'example' => 1592981237,
-            ])
             ->addRule('timeout', [
                 'type' => self::TYPE_INTEGER,
                 'description' => 'Function execution timeout in seconds.',
                 'default' => 15,
-                'example' => 1592981237,
+                'example' => 300,
+            ])
+            ->addRule('entrypoint', [
+                'type' => self::TYPE_STRING,
+                'description' => 'The entrypoint file used to execute the deployment.',
+                'default' => '',
+                'example' => 'index.js',
+            ])
+            ->addRule('commands', [
+                'type' => self::TYPE_STRING,
+                'description' => 'The build command used to build the deployment.',
+                'default' => '',
+                'example' => 'npm install',
+            ])
+            ->addRule('version', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Version of Open Runtimes used for the function.',
+                'default' => 'v3',
+                'example' => 'v2',
+            ])
+            ->addRule('installationId', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Function VCS (Version Control System) installation id.',
+                'default' => '',
+                'example' => '6m40at4ejk5h2u9s1hboo',
+            ])
+            ->addRule('providerRepositoryId', [
+                'type' => self::TYPE_STRING,
+                'description' => 'VCS (Version Control System) Repository ID',
+                'default' => '',
+                'example' => 'appwrite',
+            ])
+            ->addRule('providerBranch', [
+                'type' => self::TYPE_STRING,
+                'description' => 'VCS (Version Control System) branch name',
+                'default' => '',
+                'example' => 'main',
+            ])
+            ->addRule('providerRootDirectory', [
+                'type' => self::TYPE_STRING,
+                'description' => 'Path to function in VCS (Version Control System) repository',
+                'default' => '',
+                'example' => 'functions/helloWorld',
+            ])
+            ->addRule('providerSilentMode', [
+                'type' => self::TYPE_BOOLEAN,
+                'description' => 'Is VCS (Version Control System) connection is in silent mode? When in silence mode, no comments will be posted on the repository pull or merge requests',
+                'default' => false,
+                'example' => false,
             ])
         ;
     }
@@ -119,26 +168,5 @@ class Func extends Model
     public function getType(): string
     {
         return Response::MODEL_FUNCTION;
-    }
-
-    /**
-     * Filter Function
-     *
-     * Automatically converts a [] default to a stdClass, this is called while grabbing the document.
-     *
-     * @param Document $document
-     * @return Document
-     */
-    public function filter(Document $document): Document
-    {
-        $vars = $document->getAttribute('vars');
-        if ($vars instanceof Document) {
-            $vars = $vars->getArrayCopy();
-        }
-
-        if (is_array($vars) && empty($vars)) {
-            $document->setAttribute('vars', new stdClass());
-        }
-        return $document;
     }
 }

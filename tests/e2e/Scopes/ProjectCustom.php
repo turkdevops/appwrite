@@ -3,6 +3,7 @@
 namespace Tests\E2E\Scopes;
 
 use Tests\E2E\Client;
+use Utopia\Database\Helpers\ID;
 
 trait ProjectCustom
 {
@@ -12,11 +13,12 @@ trait ProjectCustom
     protected static $project = [];
 
     /**
+     * @param bool $fresh
      * @return array
      */
-    public function getProject(): array
+    public function getProject(bool $fresh = false): array
     {
-        if (!empty(self::$project)) {
+        if (!empty(self::$project) && !$fresh) {
             return self::$project;
         }
 
@@ -26,7 +28,7 @@ trait ProjectCustom
             'cookie' => 'a_session_console=' . $this->getRoot()['session'],
             'x-appwrite-project' => 'console',
         ], [
-            'teamId' => 'unique()',
+            'teamId' => ID::unique(),
             'name' => 'Demo Project Team',
         ]);
         $this->assertEquals(201, $team['headers']['status-code']);
@@ -39,18 +41,12 @@ trait ProjectCustom
             'cookie' => 'a_session_console=' . $this->getRoot()['session'],
             'x-appwrite-project' => 'console',
         ], [
-            'projectId' => 'unique()',
+            'projectId' => ID::unique(),
+            'region' => 'default',
             'name' => 'Demo Project',
             'teamId' => $team['body']['$id'],
             'description' => 'Demo Project Description',
-            'logo' => '',
             'url' => 'https://appwrite.io',
-            'legalName' => '',
-            'legalCountry' => '',
-            'legalState' => '',
-            'legalCity' => '',
-            'legalAddress' => '',
-            'legalTaxId' => '',
         ]);
 
         $this->assertEquals(201, $project['headers']['status-code']);
@@ -101,27 +97,44 @@ trait ProjectCustom
             'name' => 'Webhook Test',
             'events' => [
                 'databases.*',
-                'functions.*',
+                // 'functions.*', TODO @christyjacob4 : enable test once we allow functions.* events
                 'buckets.*',
                 'teams.*',
                 'users.*'
             ],
             'url' => 'http://request-catcher:5000/webhook',
             'security' => false,
-            'httpUser' => '',
-            'httpPass' => '',
         ]);
 
         $this->assertEquals(201, $webhook['headers']['status-code']);
         $this->assertNotEmpty($webhook['body']);
 
-        self::$project = [
+        $this->client->call(Client::METHOD_PATCH, '/projects/' . $project['body']['$id'] . '/smtp', [
+            'origin' => 'http://localhost',
+            'content-type' => 'application/json',
+            'cookie' => 'a_session_console=' . $this->getRoot()['session'],
+            'x-appwrite-project' => 'console',
+        ], [
+            'enabled' => true,
+            'senderEmail' => 'mailer@appwrite.io',
+            'senderName' => 'Mailer',
+            'host' => 'maildev',
+            'port' => 1025,
+            'username' => '',
+            'password' => '',
+        ]);
+
+        $project = [
             '$id' => $project['body']['$id'],
             'name' => $project['body']['name'],
             'apiKey' => $key['body']['secret'],
             'webhookId' => $webhook['body']['$id'],
             'signatureKey' => $webhook['body']['signatureKey'],
         ];
+        if ($fresh) {
+            return $project;
+        }
+        self::$project = $project;
 
         return self::$project;
     }

@@ -8,10 +8,10 @@ use Utopia\Database\Document;
 class Delete extends Event
 {
     protected string $type = '';
-    protected ?int $timestamp = null;
-    protected ?int $timestamp1d = null;
-    protected ?int $timestamp30m = null;
     protected ?Document $document = null;
+    protected ?string $resource = null;
+    protected ?string $datetime = null;
+    protected ?string $hourlyUsageRetentionDatetime = null;
 
     public function __construct()
     {
@@ -42,41 +42,26 @@ class Delete extends Event
     }
 
     /**
-     * Set timestamp.
+     * set Datetime.
      *
-     * @param int $timestamp
+     * @param string $datetime
      * @return self
      */
-    public function setTimestamp(int $timestamp): self
+    public function setDatetime(string $datetime): self
     {
-        $this->timestamp = $timestamp;
-
+        $this->datetime = $datetime;
         return $this;
     }
 
     /**
-     * Set timestamp for 1 day interval.
+     * Sets datetime for 1h interval.
      *
-     * @param int $timestamp
+     * @param string $datetime
      * @return self
      */
-    public function setTimestamp1d(int $timestamp): self
+    public function setUsageRetentionHourlyDateTime(string $datetime): self
     {
-        $this->timestamp1d = $timestamp;
-
-        return $this;
-    }
-
-    /**
-     * Sets timestamp for 30m interval.
-     *
-     * @param int $timestamp
-     * @return self
-     */
-    public function setTimestamp30m(int $timestamp): self
-    {
-        $this->timestamp30m = $timestamp;
-
+        $this->hourlyUsageRetentionDatetime = $datetime;
         return $this;
     }
 
@@ -94,6 +79,29 @@ class Delete extends Event
     }
 
     /**
+     * Returns the resource for the delete event.
+     *
+     * @return string
+     */
+    public function getResource(): string
+    {
+        return $this->resource;
+    }
+
+    /**
+     * Sets the resource for the delete event.
+     *
+     * @param string $resource
+     * @return self
+     */
+    public function setResource(string $resource): self
+    {
+        $this->resource = $resource;
+
+        return $this;
+    }
+
+    /**
      * Returns the set document for the delete event.
      *
      * @return null|Document
@@ -102,6 +110,7 @@ class Delete extends Event
     {
         return $this->document;
     }
+
 
     /**
      * Executes this event and sends it to the deletes worker.
@@ -115,9 +124,9 @@ class Delete extends Event
             'project' => $this->project,
             'type' => $this->type,
             'document' => $this->document,
-            'timestamp' => $this->timestamp,
-            'timestamp1d' => $this->timestamp1d,
-            'timestamp30m' => $this->timestamp30m
+            'resource' => $this->resource,
+            'datetime' => $this->datetime,
+            'hourlyUsageRetentionDatetime' => $this->hourlyUsageRetentionDatetime
         ]);
     }
 }

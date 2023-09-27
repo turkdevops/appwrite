@@ -10,6 +10,9 @@ use Swoole\Http\Response as SwooleResponse;
 use Utopia\App;
 use Utopia\CLI\Console;
 use Utopia\Config\Config;
+use Utopia\Database\Helpers\ID;
+use Utopia\Database\Helpers\Permission;
+use Utopia\Database\Helpers\Role;
 use Utopia\Database\Validator\Authorization;
 use Utopia\Audit\Audit;
 use Utopia\Abuse\Adapters\TimeLimit;
@@ -19,6 +22,7 @@ use Utopia\Swoole\Files;
 use Appwrite\Utopia\Request;
 use Utopia\Logger\Log;
 use Utopia\Logger\Log\User;
+use Utopia\Pools\Group;
 
 $http = new Server("0.0.0.0", App::getEnv('PORT', 80));
 
@@ -35,8 +39,7 @@ $http
         'http_compression_level' => 6,
         'package_max_length' => $payloadSize,
         'buffer_output_size' => $payloadSize,
-    ])
-;
+    ]);
 
 $http->on('WorkerStart', function ($server, $workerId) {
     Console::success('Worker ' . ++$workerId . ' started successfully');
@@ -50,7 +53,7 @@ $http->on('AfterReload', function ($server, $workerId) {
     Console::success('Reload completed...');
 });
 
-Files::load(__DIR__ . '/../public');
+Files::load(__DIR__ . '/../console');
 
 include __DIR__ . '/controllers/general.php';
 
@@ -58,6 +61,10 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
     $app = new App('UTC');
 
     go(function () use ($register, $app) {
+        $pools = $register->get('pools');
+        /** @var Group $pools */
+        App::setResource('pools', fn () => $pools);
+
         // wait for database to be ready
         $attempts = 0;
         $max = 10;
@@ -66,8 +73,8 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
         do {
             try {
                 $attempts++;
-                $db = $register->get('dbPool')->get();
-                $redis = $register->get('redisPool')->get();
+                $dbForConsole = $app->getResource('dbForConsole');
+                /** @var Utopia\Database\Database $dbForConsole */
                 break; // leave the do-while if successful
             } catch (\Exception $e) {
                 Console::warning("Database not ready. Retrying connection ({$attempts})...");
@@ -78,26 +85,12 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
             }
         } while ($attempts < $max);
 
-        App::setResource('db', fn() => $db);
-        App::setResource('cache', fn() => $redis);
-
-        $dbForConsole = $app->getResource('dbForConsole'); /** @var Utopia\Database\Database $dbForConsole */
-
         Console::success('[Setup] - Server database init started...');
-        $collections = Config::getParam('collections', []); /** @var array $collections */
-
-        if (!$dbForConsole->exists(App::getEnv('_APP_DB_SCHEMA', 'appwrite'))) {
-            $redis->flushAll();
-
-            Console::success('[Setup] - Creating database: appwrite...');
-
-            $dbForConsole->create(App::getEnv('_APP_DB_SCHEMA', 'appwrite'));
-        }
 
         try {
-            Console::success('[Setup] - Creating metadata table: appwrite...');
-            $dbForConsole->createMetadata();
-        } catch (\Throwable $th) {
+            Console::success('[Setup] - Creating database: appwrite...');
+            $dbForConsole->create();
+        } catch (\Exception $e) {
             Console::success('[Setup] - Skip: metadata table already exists');
         }
 
@@ -111,17 +104,14 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
             $adapter->setup();
         }
 
-        foreach ($collections as $key => $collection) {
+        /** @var array $collections */
+        $collections = Config::getParam('collections', []);
+        $consoleCollections = $collections['console'];
+        foreach ($consoleCollections as $key => $collection) {
             if (($collection['$collection'] ?? '') !== Database::METADATA) {
                 continue;
             }
             if (!$dbForConsole->getCollection($key)->isEmpty()) {
-                continue;
-            }
-            /**
-             * Skip to prevent 0.15 migration issues.
-             */
-            if ($key === 'databases' && $dbForConsole->exists(App::getEnv('_APP_DB_SCHEMA', 'appwrite'), 'collections')) {
                 continue;
             }
 
@@ -132,7 +122,7 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
 
             foreach ($collection['attributes'] as $attribute) {
                 $attributes[] = new Document([
-                    '$id' => $attribute['$id'],
+                    '$id' => ID::custom($attribute['$id']),
                     'type' => $attribute['type'],
                     'size' => $attribute['size'],
                     'required' => $attribute['required'],
@@ -146,7 +136,7 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
 
             foreach ($collection['indexes'] as $index) {
                 $indexes[] = new Document([
-                    '$id' => $index['$id'],
+                    '$id' => ID::custom($index['$id']),
                     'type' => $index['type'],
                     'attributes' => $index['attributes'],
                     'lengths' => $index['lengths'],
@@ -157,27 +147,32 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
             $dbForConsole->createCollection($key, $attributes, $indexes);
         }
 
-        if ($dbForConsole->getDocument('buckets', 'default')->isEmpty()) {
+        if ($dbForConsole->getDocument('buckets', 'default')->isEmpty() && !$dbForConsole->exists($dbForConsole->getDefaultDatabase(), 'bucket_1')) {
             Console::success('[Setup] - Creating default bucket...');
             $dbForConsole->createDocument('buckets', new Document([
-                '$id' => 'default',
-                '$collection' => 'buckets',
+                '$id' => ID::custom('default'),
+                '$collection' => ID::custom('buckets'),
                 'name' => 'Default',
-                'permission' => 'file',
                 'maximumFileSize' => (int) App::getEnv('_APP_STORAGE_LIMIT', 0), // 10MB
                 'allowedFileExtensions' => [],
                 'enabled' => true,
+                'compression' => 'gzip',
                 'encryption' => true,
                 'antivirus' => true,
-                '$read' => ['role:all'],
-                '$write' => ['role:all'],
+                'fileSecurity' => true,
+                '$permissions' => [
+                    Permission::create(Role::any()),
+                    Permission::read(Role::any()),
+                    Permission::update(Role::any()),
+                    Permission::delete(Role::any()),
+                ],
                 'search' => 'buckets Default',
             ]));
 
             $bucket = $dbForConsole->getDocument('buckets', 'default');
 
             Console::success('[Setup] - Creating files collection for default bucket...');
-            $files = $collections['files'] ?? [];
+            $files = $collections['buckets']['files'] ?? [];
             if (empty($files)) {
                 throw new Exception('Files collection is not configured.');
             }
@@ -187,7 +182,7 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
 
             foreach ($files['attributes'] as $attribute) {
                 $attributes[] = new Document([
-                    '$id' => $attribute['$id'],
+                    '$id' => ID::custom($attribute['$id']),
                     'type' => $attribute['type'],
                     'size' => $attribute['size'],
                     'required' => $attribute['required'],
@@ -201,7 +196,7 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
 
             foreach ($files['indexes'] as $index) {
                 $indexes[] = new Document([
-                    '$id' => $index['$id'],
+                    '$id' => ID::custom($index['$id']),
                     'type' => $index['type'],
                     'attributes' => $index['attributes'],
                     'lengths' => $index['lengths'],
@@ -211,6 +206,8 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
 
             $dbForConsole->createCollection('bucket_' . $bucket->getInternalId(), $attributes, $indexes);
         }
+
+        $pools->reclaim();
 
         Console::success('[Setup] - Server database init completed...');
     });
@@ -226,6 +223,9 @@ $http->on('start', function (Server $http) use ($payloadSize, $register) {
 });
 
 $http->on('request', function (SwooleRequest $swooleRequest, SwooleResponse $swooleResponse) use ($register) {
+    App::setResource('swooleRequest', fn () => $swooleRequest);
+    App::setResource('swooleResponse', fn () => $swooleResponse);
+
     $request = new Request($swooleRequest);
     $response = new Response($swooleResponse);
 
@@ -236,23 +236,19 @@ $http->on('request', function (SwooleRequest $swooleRequest, SwooleResponse $swo
             ->setContentType(Files::getFileMimeType($request->getURI()))
             ->addHeader('Cache-Control', 'public, max-age=' . $time)
             ->addHeader('Expires', \date('D, d M Y H:i:s', \time() + $time) . ' GMT') // 45 days cache
-            ->send(Files::getFileContents($request->getURI()))
-        ;
+            ->send(Files::getFileContents($request->getURI()));
 
         return;
     }
 
     $app = new App('UTC');
 
-    $db = $register->get('dbPool')->get();
-    $redis = $register->get('redisPool')->get();
-
-    App::setResource('db', fn() => $db);
-    App::setResource('cache', fn() => $redis);
+    $pools = $register->get('pools');
+    App::setResource('pools', fn () => $pools);
 
     try {
         Authorization::cleanRoles();
-        Authorization::setRole('role:all');
+        Authorization::setRole(Role::any()->toString());
 
         $app->run($request, $response);
     } catch (\Throwable $th) {
@@ -268,7 +264,7 @@ $http->on('request', function (SwooleRequest $swooleRequest, SwooleResponse $swo
             }
 
             $loggerBreadcrumbs = $app->getResource("loggerBreadcrumbs");
-            $route = $app->match($request);
+            $route = $app->getRoute();
 
             $log = new Utopia\Logger\Log();
 
@@ -294,7 +290,7 @@ $http->on('request', function (SwooleRequest $swooleRequest, SwooleResponse $swo
             $log->addExtra('line', $th->getLine());
             $log->addExtra('trace', $th->getTraceAsString());
             $log->addExtra('detailedTrace', $th->getTrace());
-            $log->addExtra('roles', Authorization::$roles);
+            $log->addExtra('roles', Authorization::getRoles());
 
             $action = $route->getLabel("sdk.namespace", "UNKNOWN_NAMESPACE") . '.' . $route->getLabel("sdk.method", "UNKNOWN_METHOD");
             $log->setAction($action);
@@ -315,13 +311,6 @@ $http->on('request', function (SwooleRequest $swooleRequest, SwooleResponse $swo
         Console::error('[Error] File: ' . $th->getFile());
         Console::error('[Error] Line: ' . $th->getLine());
 
-        /**
-         * Reset Database connection if PDOException was thrown.
-         */
-        if ($th instanceof PDOException) {
-            $db = null;
-        }
-
         $swooleResponse->setStatusCode(500);
 
         $output = ((App::isDevelopment())) ? [
@@ -339,13 +328,7 @@ $http->on('request', function (SwooleRequest $swooleRequest, SwooleResponse $swo
 
         $swooleResponse->end(\json_encode($output));
     } finally {
-        /** @var PDOPool $dbPool */
-        $dbPool = $register->get('dbPool');
-        $dbPool->put($db);
-
-        /** @var RedisPool $redisPool */
-        $redisPool = $register->get('redisPool');
-        $redisPool->put($redis);
+        $pools->reclaim();
     }
 });
 

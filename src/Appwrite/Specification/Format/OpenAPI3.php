@@ -5,7 +5,10 @@ namespace Appwrite\Specification\Format;
 use Appwrite\Specification\Format;
 use Appwrite\Template\Template;
 use Appwrite\Utopia\Response\Model;
+use Utopia\Database\Helpers\Permission;
+use Utopia\Database\Helpers\Role;
 use Utopia\Validator;
+use Utopia\Validator\Nullable;
 
 class OpenAPI3 extends Format
 {
@@ -17,15 +20,32 @@ class OpenAPI3 extends Format
     protected function getNestedModels(Model $model, array &$usedModels): void
     {
         foreach ($model->getRules() as $rule) {
-            if (
-                in_array($model->getType(), $usedModels)
-                && !in_array($rule['type'], ['string', 'integer', 'boolean', 'json', 'float', 'double'])
-            ) {
-                $usedModels[] = $rule['type'];
-                foreach ($this->models as $m) {
-                    if ($m->getType() === $rule['type']) {
-                        $this->getNestedModels($m, $usedModels);
-                        return;
+            if (!in_array($model->getType(), $usedModels)) {
+                continue;
+            }
+
+            if (\is_array($rule['type'])) {
+                foreach ($rule['type'] as $ruleType) {
+                    if (!in_array($ruleType, ['string', 'integer', 'boolean', 'json', 'float', 'double'])) {
+                        $usedModels[] = $ruleType;
+
+                        foreach ($this->models as $m) {
+                            if ($m->getType() === $ruleType) {
+                                $this->getNestedModels($m, $usedModels);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (!in_array($rule['type'], ['string', 'integer', 'boolean', 'json', 'float', 'double'])) {
+                    $usedModels[] = $rule['type'];
+
+                    foreach ($this->models as $m) {
+                        if ($m->getType() === $rule['type']) {
+                            $this->getNestedModels($m, $usedModels);
+                            continue;
+                        }
                     }
                 }
             }
@@ -151,6 +171,9 @@ class OpenAPI3 extends Format
                     'scope' => $route->getLabel('scope', ''),
                     'platforms' => $sdkPlatforms,
                     'packaging' => $route->getLabel('sdk.packaging', false),
+                    'offline-model' => $route->getLabel('sdk.offline.model', ''),
+                    'offline-key' => $route->getLabel('sdk.offline.key', ''),
+                    'offline-response-key' => $route->getLabel('sdk.offline.response.key', '$id'),
                 ],
             ];
 
@@ -262,6 +285,13 @@ class OpenAPI3 extends Format
                     }
                 }
 
+                $isNullable = $validator instanceof Nullable;
+
+                if ($isNullable) {
+                    /** @var Nullable $validator */
+                    $validator = $validator->getValidator();
+                }
+
                 switch ((!empty($validator)) ? \get_class($validator) : '') {
                     case 'Utopia\Validator\Text':
                         $node['schema']['type'] = $validator->getType();
@@ -282,12 +312,17 @@ class OpenAPI3 extends Format
                         $node['schema']['type'] = $validator->getType();
                         $node['schema']['x-example'] = '[' . \strtoupper(Template::fromCamelCaseToSnake($node['name'])) . ']';
                         break;
+                    case 'Utopia\Database\Validator\DatetimeValidator':
+                        $node['schema']['type'] = $validator->getType();
+                        $node['schema']['format'] = 'datetime';
+                        $node['schema']['x-example'] = Model::TYPE_DATETIME_EXAMPLE;
+                        break;
                     case 'Appwrite\Network\Validator\Email':
                         $node['schema']['type'] = $validator->getType();
                         $node['schema']['format'] = 'email';
                         $node['schema']['x-example'] = 'email@example.com';
                         break;
-                    case 'Appwrite\Network\Validator\URL':
+                    case 'Utopia\Validator\URL':
                         $node['schema']['type'] = $validator->getType();
                         $node['schema']['format'] = 'url';
                         $node['schema']['x-example'] = 'https://example.com';
@@ -306,6 +341,25 @@ class OpenAPI3 extends Format
                         $node['schema']['format'] = 'binary';
                         break;
                     case 'Utopia\Validator\ArrayList':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Buckets':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Collections':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Indexes':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Attributes':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Databases':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Deployments':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Installations':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Documents':
+                    case 'Utopia\Database\Validator\Queries\Documents':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Executions':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Files':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Functions':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Rules':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Memberships':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Projects':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Teams':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Users':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Variables':
+                    case 'Utopia\Database\Validator\Queries':
                         $node['schema']['type'] = 'array';
                         $node['schema']['items'] = [
                             'type' => 'string',
@@ -316,11 +370,24 @@ class OpenAPI3 extends Format
                         $node['schema']['items'] = [
                             'type' => 'string',
                         ];
+                        $node['schema']['x-example'] = '["' . Permission::read(Role::any()) . '"]';
+                        break;
+                    case 'Utopia\Database\Validator\Roles':
+                        $node['schema']['type'] = $validator->getType();
+                        $node['schema']['items'] = [
+                            'type' => 'string',
+                        ];
+                        $node['schema']['x-example'] = '["' . Role::any()->toString() . '"]';
                         break;
                     case 'Appwrite\Auth\Validator\Password':
                         $node['schema']['type'] = $validator->getType();
                         $node['schema']['format'] = 'password';
                         $node['schema']['x-example'] = 'password';
+                        break;
+                    case 'Appwrite\Auth\Validator\Phone':
+                        $node['schema']['type'] = $validator->getType();
+                        $node['schema']['format'] = 'phone';
+                        $node['schema']['x-example'] = '+12065550100'; // In the US, 555 is reserved like example.com
                         break;
                     case 'Utopia\Validator\Range':
                         /** @var \Utopia\Validator\Range $validator */
@@ -340,7 +407,7 @@ class OpenAPI3 extends Format
                     case 'Utopia\Validator\Length':
                         $node['schema']['type'] = $validator->getType();
                         break;
-                    case 'Appwrite\Network\Validator\Host':
+                    case 'Utopia\Validator\Host':
                         $node['schema']['type'] = $validator->getType();
                         $node['schema']['format'] = 'url';
                         $node['schema']['x-example'] = 'https://example.com';
@@ -350,6 +417,25 @@ class OpenAPI3 extends Format
                         $node['schema']['type'] = $validator->getType();
                         $node['schema']['x-example'] = $validator->getList()[0];
 
+                        //Iterate from the blackList. If it matches with the current one, then it is a blackList
+                        // Do not add the enum
+                        $allowed = true;
+                        foreach ($this->enumBlacklist as $blacklist) {
+                            if (
+                                $blacklist['namespace'] == $route->getLabel('sdk.namespace', '')
+                                && $blacklist['method'] == $route->getLabel('sdk.method', '')
+                                && $blacklist['parameter'] == $name
+                            ) {
+                                $allowed = false;
+                                break;
+                            }
+                        }
+
+                        if ($allowed) {
+                                $node['schema']['enum'] = $validator->getList();
+                                $node['schema']['x-enum-name'] = $this->getEnumName($route->getLabel('sdk.namespace', ''), $route->getLabel('sdk.method', ''), $name);
+                                $node['schema']['x-enum-keys'] = $this->getEnumKeys($route->getLabel('sdk.namespace', ''), $route->getLabel('sdk.method', ''), $name);
+                        }
                         if ($validator->getType() === 'integer') {
                             $node['format'] = 'int32';
                         }
@@ -380,6 +466,13 @@ class OpenAPI3 extends Format
                         'x-example' => $node['schema']['x-example'] ?? null
                     ];
 
+                    if (isset($node['schema']['enum'])) {
+                        /// If the enum flag is Set, add the enum values to the body
+                        $body['content'][$consumes[0]]['schema']['properties'][$name]['enum'] = $node['schema']['enum'];
+                        $body['content'][$consumes[0]]['schema']['properties'][$name]['x-enum-name'] = $node['schema']['x-enum-name'] ?? null;
+                        $body['content'][$consumes[0]]['schema']['properties'][$name]['x-enum-keys'] = $node['schema']['x-enum-keys'] ?? null;
+                    }
+
                     if ($node['schema']['x-upload-id'] ?? false) {
                         $body['content'][$consumes[0]]['schema']['properties'][$name]['x-upload-id'] = $node['schema']['x-upload-id'];
                     }
@@ -394,6 +487,10 @@ class OpenAPI3 extends Format
 
                     if ($node['x-global'] ?? false) {
                         $body['content'][$consumes[0]]['schema']['properties'][$name]['x-global'] = true;
+                    }
+
+                    if ($isNullable) {
+                        $body['content'][$consumes[0]]['schema']['properties'][$name]['x-nullable'] = true;
                     }
                 }
 
@@ -447,6 +544,7 @@ class OpenAPI3 extends Format
 
                 switch ($rule['type']) {
                     case 'string':
+                    case 'datetime':
                         $type = 'string';
                         break;
 

@@ -1,6 +1,7 @@
 <?php
 
-return [ // Ordered by ABC.
+// Ordered by ABC.
+return [
     'amazon' => [
         'name' => 'Amazon',
         'developers' => 'https://developer.amazon.com/apps-and-games/services-and-apis',
@@ -17,7 +18,7 @@ return [ // Ordered by ABC.
         'icon' => 'icon-apple',
         'enabled' => true,
         'sandbox' => false,
-        'form' => 'apple.phtml', // Perperation for adding ability to customized OAuth UI forms, currently handled hardcoded.
+        'form' => 'apple.phtml', // Preparation for adding ability to customized OAuth UI forms, currently handled hardcoded.
         'beta' => true,
         'mock' => false,
     ],
@@ -101,10 +102,30 @@ return [ // Ordered by ABC.
         'beta' => false,
         'mock' => false,
     ],
+    'disqus' => [
+        'name' => 'Disqus',
+        'developers' => 'https://disqus.com/api/docs/auth/',
+        'icon' => 'icon-disqus',
+        'enabled' => true,
+        'sandbox' => false,
+        'form' => false,
+        'beta' => false,
+        'mock' => false,
+    ],
     'dropbox' => [
         'name' => 'Dropbox',
         'developers' => 'https://www.dropbox.com/developers/documentation',
         'icon' => 'icon-dropbox',
+        'enabled' => true,
+        'sandbox' => false,
+        'form' => false,
+        'beta' => false,
+        'mock' => false,
+    ],
+    'etsy' => [
+        'name' => 'Etsy',
+        'developers' => 'https://developers.etsy.com/',
+        'icon' => 'icon-etsy',
         'enabled' => true,
         'sandbox' => false,
         'form' => false,
@@ -181,6 +202,16 @@ return [ // Ordered by ABC.
         'beta' => false,
         'mock' => false,
     ],
+    'oidc' => [
+        'name' => 'OpenID Connect',
+        'developers' => 'https://openid.net/connect/faq/',
+        'icon' => 'icon-oidc',
+        'enabled' => true,
+        'sandbox' => false,
+        'form' => 'oidc.phtml',
+        'beta' => false,
+        'mock' => false,
+    ],
     'okta' => [
         'name' => 'Okta',
         'developers' => 'https://developer.okta.com/',
@@ -202,7 +233,7 @@ return [ // Ordered by ABC.
         'mock' => false
     ],
     'paypalSandbox' => [
-        'name' => 'PayPal',
+        'name' => 'PayPal Sandbox',
         'developers' => 'https://developer.paypal.com/docs/api/overview/',
         'icon' => 'icon-paypal',
         'enabled' => true,
@@ -272,7 +303,7 @@ return [ // Ordered by ABC.
         'mock' => false,
     ],
     'tradeshiftBox' => [
-        'name' => 'Tradeshift',
+        'name' => 'Tradeshift Sandbox',
         'developers' => 'https://developers.tradeshift.com/docs/api',
         'icon' => 'icon-tradeshiftbox',
         'enabled' => true,

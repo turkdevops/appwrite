@@ -1,15 +1,21 @@
 <?php
 
-use Appwrite\Event\Event;
+use Appwrite\Event\Mail;
 use Appwrite\Network\Validator\CNAME;
+use Appwrite\Utopia\Response\Model\Rule;
+use Appwrite\Messaging\Adapter\Realtime;
+use Appwrite\Event\Event;
 use Appwrite\Resque\Worker;
+use Appwrite\Template\Template;
 use Utopia\App;
 use Utopia\CLI\Console;
 use Utopia\Database\Database;
 use Utopia\Database\Document;
+use Utopia\Database\DateTime;
+use Utopia\Database\Helpers\ID;
 use Utopia\Database\Query;
-use Utopia\Database\Validator\Authorization;
 use Utopia\Domains\Domain;
+use Utopia\Locale\Locale;
 
 require_once __DIR__ . '/../init.php';
 
@@ -43,7 +49,7 @@ class CertificatesV1 extends Worker
          * 4. Validate security email. Cannot be empty, required by LetsEncrypt
          * 5. Validate renew date with certificate file, unless requested to skip by parameter
          * 6. Issue a certificate using certbot CLI
-         * 7. Update 'log' attribute on certificate document with Certbot message
+         * 7. Update 'logs' attribute on certificate document with Certbot message
          * 8. Create storage folder for certificate, if not ready already
          * 9. Move certificates from Certbot location to our Storage
          * 10. Create/Update our Storage with new Traefik config with new certificate paths
@@ -53,7 +59,7 @@ class CertificatesV1 extends Worker
          * If at any point unexpected error occurs, program stops without applying changes to document, and error is thrown into worker
          *
          * If code stops with expected error:
-         * 1. 'log' attribute on document is updated with error message
+         * 1. 'logs' attribute on document is updated with error message
          * 2. 'attempts' amount is increased
          * 3. Console log is shown
          * 4. Email is sent to security email
@@ -73,13 +79,15 @@ class CertificatesV1 extends Worker
         $domain = new Domain($document->getAttribute('domain', ''));
 
         // Get current certificate
-        $certificate = $this->dbForConsole->findOne('certificates', [new Query('domain', Query::TYPE_EQUAL, [$domain->get()])]);
+        $certificate = $this->dbForConsole->findOne('certificates', [Query::equal('domain', [$domain->get()])]);
 
         // If we don't have certificate for domain yet, let's create new document. At the end we save it
         if (!$certificate) {
             $certificate = new Document();
             $certificate->setAttribute('domain', $domain->get());
         }
+
+        $success = false;
 
         try {
             // Email for alerts is required by LetsEncrypt
@@ -100,39 +108,46 @@ class CertificatesV1 extends Worker
                 throw new Exception('Renew isn\'t required.');
             }
 
+            // Prepare folder name for certbot. Using this helps prevent miss-match in LetsEncrypt configuration when renewing certificate
+            $folder = ID::unique();
+
             // Generate certificate files using Let's Encrypt
-            $letsEncryptData = $this->issueCertificate($domain->get(), $email);
+            $letsEncryptData = $this->issueCertificate($folder, $domain->get(), $email);
 
             // Command succeeded, store all data into document
-            // We store stderr too, because it may include warnings
-            $certificate->setAttribute('log', \json_encode([
-                'stdout' => $letsEncryptData['stdout'],
-                'stderr' => $letsEncryptData['stderr'],
-            ]));
+            $logs = 'Certificate successfully generated.';
+            $certificate->setAttribute('logs', \mb_strcut($logs, 0, 1000000));// Limit to 1MB
 
             // Give certificates to Traefik
-            $this->applyCertificateFiles($domain->get(), $letsEncryptData);
+            $this->applyCertificateFiles($folder, $domain->get(), $letsEncryptData);
 
             // Update certificate info stored in database
             $certificate->setAttribute('renewDate', $this->getRenewDate($domain->get()));
             $certificate->setAttribute('attempts', 0);
-            $certificate->setAttribute('issueDate', \time());
+            $certificate->setAttribute('issueDate', DateTime::now());
+
+            $success = true;
         } catch (Throwable $e) {
+            $logs = $e->getMessage();
+
             // Set exception as log in certificate document
-            $certificate->setAttribute('log', $e->getMessage());
+            $certificate->setAttribute('logs', \mb_strcut($logs, 0, 1000000));// Limit to 1MB
 
             // Increase attempts count
             $attempts = $certificate->getAttribute('attempts', 0) + 1;
             $certificate->setAttribute('attempts', $attempts);
 
+            // Store cuttent time as renew date to ensure another attempt in next maintenance cycle
+            $certificate->setAttribute('renewDate', DateTime::now());
+
             // Send email to security email
             $this->notifyError($domain->get(), $e->getMessage(), $attempts);
         } finally {
             // All actions result in new updatedAt date
-            $certificate->setAttribute('updated', \time());
+            $certificate->setAttribute('updated', DateTime::now());
 
             // Save all changes we made to certificate document into database
-            $this->saveCertificateDocument($domain->get(), $certificate);
+            $this->saveCertificateDocument($domain->get(), $certificate, $success);
         }
     }
 
@@ -145,24 +160,26 @@ class CertificatesV1 extends Worker
      *
      * @param string $domain Domain name that certificate is for
      * @param Document $certificate Certificate document that we need to save
+     * @param bool $success Was certificate generation successful?
      *
      * @return void
      */
-    private function saveCertificateDocument(string $domain, Document $certificate): void
+    private function saveCertificateDocument(string $domain, Document $certificate, bool $success): void
     {
         // Check if update or insert required
-        $certificateDocument = $this->dbForConsole->findOne('certificates', [new Query('domain', Query::TYPE_EQUAL, [$domain])]);
+        $certificateDocument = $this->dbForConsole->findOne('certificates', [Query::equal('domain', [$domain])]);
         if (!empty($certificateDocument) && !$certificateDocument->isEmpty()) {
             // Merge new data with current data
             $certificate = new Document(\array_merge($certificateDocument->getArrayCopy(), $certificate->getArrayCopy()));
 
             $certificate = $this->dbForConsole->updateDocument('certificates', $certificate->getId(), $certificate);
         } else {
+            $certificate->removeAttribute('$internalId');
             $certificate = $this->dbForConsole->createDocument('certificates', $certificate);
         }
 
         $certificateId = $certificate->getId();
-        $this->updateDomainDocuments($certificateId, $domain);
+        $this->updateDomainDocuments($certificateId, $domain, $success);
     }
 
     /**
@@ -175,11 +192,6 @@ class CertificatesV1 extends Worker
         $envDomain = App::getEnv('_APP_DOMAIN', '');
         if (!empty($envDomain) && $envDomain !== 'localhost') {
             return $envDomain;
-        } else {
-            $domainDocument = $this->dbForConsole->findOne('domains', [], 0, ['_id'], ['ASC']);
-            if ($domainDocument) {
-                return $domainDocument->getAttribute('domain');
-            }
         }
 
         return null;
@@ -259,18 +271,20 @@ class CertificatesV1 extends Worker
     /**
      * LetsEncrypt communication to issue certificate (using certbot CLI)
      *
+     * @param string $folder Folder into which certificates should be generated
      * @param string $domain Domain to generate certificate for
      *
      * @return array Named array with keys 'stdout' and 'stderr', both string
      */
-    private function issueCertificate(string $domain, string $email): array
+    private function issueCertificate(string $folder, string $domain, string $email): array
     {
         $stdout = '';
         $stderr = '';
 
         $staging = (App::isProduction()) ? '' : ' --dry-run';
-        $exit = Console::execute("certbot certonly --webroot --noninteractive --agree-tos{$staging}"
+        $exit = Console::execute("certbot certonly -v --webroot --noninteractive --agree-tos{$staging}"
             . " --email " . $email
+            . " --cert-name " . $folder
             . " -w " . APP_STORAGE_CERTIFICATES
             . " -d {$domain}", '', $stdout, $stderr);
 
@@ -290,27 +304,27 @@ class CertificatesV1 extends Worker
      *
      * @param string $domain Domain which certificate was generated for
      *
-     * @return int
+     * @return string
      */
-    private function getRenewDate(string $domain): int
+    private function getRenewDate(string $domain): string
     {
         $certPath = APP_STORAGE_CERTIFICATES . '/' . $domain . '/cert.pem';
         $certData = openssl_x509_parse(file_get_contents($certPath));
-        $validTo = $certData['validTo_time_t'] ?? 0;
-        $expiryInAdvance = (60 * 60 * 24 * 30); // 30 days
-
-        return $validTo - $expiryInAdvance;
+        $validTo = $certData['validTo_time_t'] ?? null;
+        $dt = (new \DateTime())->setTimestamp($validTo);
+        return DateTime::addSeconds($dt, -60 * 60 * 24 * 30); // -30 days
     }
 
     /**
      * Method to take files from Let's Encrypt, and put it into Traefik.
      *
      * @param string $domain Domain which certificate was generated for
+     * @param string $folder Folder in which certificates were generated
      * @param array $letsEncryptData Let's Encrypt logs to use for additional info when throwing error
      *
      * @return void
      */
-    private function applyCertificateFiles(string $domain, array $letsEncryptData): void
+    private function applyCertificateFiles(string $folder, string $domain, array $letsEncryptData): void
     {
         // Prepare folder in storage for domain
         $path = APP_STORAGE_CERTIFICATES . '/' . $domain;
@@ -320,20 +334,20 @@ class CertificatesV1 extends Worker
             }
         }
 
-        // Move generated files from certbot into our storage
-        if (!@\rename('/etc/letsencrypt/live/' . $domain . '/cert.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/cert.pem')) {
+        // Move generated files
+        if (!@\rename('/etc/letsencrypt/live/' . $folder . '/cert.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/cert.pem')) {
             throw new Exception('Failed to rename certificate cert.pem. Let\'s Encrypt log: ' . $letsEncryptData['stderr'] . ' ; ' . $letsEncryptData['stdout']);
         }
 
-        if (!@\rename('/etc/letsencrypt/live/' . $domain . '/chain.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/chain.pem')) {
+        if (!@\rename('/etc/letsencrypt/live/' . $folder . '/chain.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/chain.pem')) {
             throw new Exception('Failed to rename certificate chain.pem. Let\'s Encrypt log: ' . $letsEncryptData['stderr'] . ' ; ' . $letsEncryptData['stdout']);
         }
 
-        if (!@\rename('/etc/letsencrypt/live/' . $domain . '/fullchain.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/fullchain.pem')) {
+        if (!@\rename('/etc/letsencrypt/live/' . $folder . '/fullchain.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/fullchain.pem')) {
             throw new Exception('Failed to rename certificate fullchain.pem. Let\'s Encrypt log: ' . $letsEncryptData['stderr'] . ' ; ' . $letsEncryptData['stdout']);
         }
 
-        if (!@\rename('/etc/letsencrypt/live/' . $domain . '/privkey.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/privkey.pem')) {
+        if (!@\rename('/etc/letsencrypt/live/' . $folder . '/privkey.pem', APP_STORAGE_CERTIFICATES . '/' . $domain . '/privkey.pem')) {
             throw new Exception('Failed to rename certificate privkey.pem. Let\'s Encrypt log: ' . $letsEncryptData['stderr'] . ' ; ' . $letsEncryptData['stdout']);
         }
 
@@ -365,19 +379,39 @@ class CertificatesV1 extends Worker
         Console::warning('Cannot renew domain (' . $domain . ') on attempt no. ' . $attempt . ' certificate: ' . $errorMessage);
 
         // Send mail to administratore mail
-        Resque::enqueue(Event::MAILS_QUEUE_NAME, Event::MAILS_CLASS_NAME, [
-            'from' => 'console',
-            'project' => 'console',
-            'name' => 'Appwrite Administrator',
-            'recipient' => App::getEnv('_APP_SYSTEM_SECURITY_EMAIL_ADDRESS'),
-            'url' => 'https://' . $domain,
-            'locale' => App::getEnv('_APP_LOCALE', 'en'),
-            'type' => MAIL_TYPE_CERTIFICATE,
 
-            'domain' => $domain,
-            'error' => $errorMessage,
-            'attempt' => $attempt
-        ]);
+        $locale = new Locale(App::getEnv('_APP_LOCALE', 'en'));
+        if (!$locale->getText('emails.sender') || !$locale->getText("emails.certificate.hello") || !$locale->getText("emails.certificate.subject") || !$locale->getText("emails.certificate.body") || !$locale->getText("emails.certificate.footer") || !$locale->getText("emails.certificate.thanks") || !$locale->getText("emails.certificate.signature")) {
+            $locale->setDefault('en');
+        }
+
+        $body = Template::fromFile(__DIR__ . '/../config/locale/templates/email-base.tpl');
+
+            $subject = \sprintf($locale->getText("emails.certificate.subject"), $domain);
+            $body->setParam('{{domain}}', $domain);
+            $body->setParam('{{error}}', $errorMessage);
+            $body->setParam('{{attempt}}', $attempt);
+
+        $body
+            ->setParam('{{subject}}', $subject)
+            ->setParam('{{hello}}', $locale->getText("emails.certificate.hello"))
+            ->setParam('{{body}}', $locale->getText("emails.certificate.body"))
+            ->setParam('{{redirect}}', 'https://' . $domain)
+            ->setParam('{{footer}}', $locale->getText("emails.certificate.footer"))
+            ->setParam('{{thanks}}', $locale->getText("emails.certificate.thanks"))
+            ->setParam('{{signature}}', $locale->getText("emails.certificate.signature"))
+            ->setParam('{{project}}', 'Console')
+            ->setParam('{{direction}}', $locale->getText('settings.direction'))
+            ->setParam('{{bg-body}}', '#f7f7f7')
+            ->setParam('{{bg-content}}', '#ffffff')
+            ->setParam('{{text-content}}', '#000000');
+
+        $body = $body->render();
+        $mail = new Mail();
+        $mail
+            ->setRecipient(App::getEnv('_APP_SYSTEM_SECURITY_EMAIL_ADDRESS'))
+            ->setName('Appwrite Administrator')
+            ->trigger();
     }
 
     /**
@@ -389,24 +423,70 @@ class CertificatesV1 extends Worker
      *
      * @param string $certificateId ID of a new or updated certificate document
      * @param string $domain Domain that is affected by new certificate
+     * @param bool $success Was certificate generation successful?
      *
      * @return void
      */
-    private function updateDomainDocuments(string $certificateId, string $domain): void
+    private function updateDomainDocuments(string $certificateId, string $domain, bool $success): void
     {
-        $domains = $this->dbForConsole->find('domains', [
-            new Query('domain', Query::TYPE_EQUAL, [$domain])
-        ], 1000);
+        $rule = $this->dbForConsole->findOne('rules', [
+            Query::equal('domain', [$domain]),
+        ]);
 
-        foreach ($domains as $domainDocument) {
-            $domainDocument->setAttribute('updated', \time());
-            $domainDocument->setAttribute('certificateId', $certificateId);
+        if ($rule !== false && !$rule->isEmpty()) {
+            $rule->setAttribute('certificateId', $certificateId);
+            $rule->setAttribute('status', $success ? 'verified' : 'unverified');
+            $this->dbForConsole->updateDocument('rules', $rule->getId(), $rule);
 
-            $this->dbForConsole->updateDocument('domains', $domainDocument->getId(), $domainDocument);
+            $projectId = $rule->getAttribute('projectId');
 
-            if ($domainDocument->getAttribute('projectId')) {
-                $this->dbForConsole->deleteCachedDocument('projects', $domainDocument->getAttribute('projectId'));
+            // Skip events for console project (triggered by auto-ssl generation for 1 click setups)
+            if ($projectId === 'console') {
+                return;
             }
+
+            $project = $this->dbForConsole->getDocument('projects', $projectId);
+
+            /** Trigger Webhook */
+            $ruleModel = new Rule();
+            $ruleUpdate = new Event(Event::WEBHOOK_QUEUE_NAME, Event::WEBHOOK_CLASS_NAME);
+            $ruleUpdate
+                ->setProject($project)
+                ->setEvent('rules.[ruleId].update')
+                ->setParam('ruleId', $rule->getId())
+                ->setPayload($rule->getArrayCopy(array_keys($ruleModel->getRules())))
+                ->trigger();
+
+            /** Trigger Functions */
+            $ruleUpdate
+                ->setClass(Event::FUNCTIONS_CLASS_NAME)
+                ->setQueue(Event::FUNCTIONS_QUEUE_NAME)
+                ->trigger();
+
+            /** Trigger realtime event */
+            $allEvents = Event::generateEvents('rules.[ruleId].update', [
+                'ruleId' => $rule->getId(),
+            ]);
+            $target = Realtime::fromPayload(
+                // Pass first, most verbose event pattern
+                event: $allEvents[0],
+                payload: $rule,
+                project: $project
+            );
+            Realtime::send(
+                projectId: 'console',
+                payload: $rule->getArrayCopy(),
+                events: $allEvents,
+                channels: $target['channels'],
+                roles: $target['roles']
+            );
+            Realtime::send(
+                projectId: $project->getId(),
+                payload: $rule->getArrayCopy(),
+                events: $allEvents,
+                channels: $target['channels'],
+                roles: $target['roles']
+            );
         }
     }
 }

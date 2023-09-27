@@ -3,6 +3,7 @@
 namespace Tests\E2E\Services\Teams;
 
 use Tests\E2E\Client;
+use Utopia\Database\Validator\Datetime as DatetimeValidator;
 
 trait TeamsBaseServer
 {
@@ -31,6 +32,51 @@ trait TeamsBaseServer
         return [];
     }
 
+    /**
+     * @depends testCreateTeamMembership
+     */
+    public function testGetTeamMembership($data): void
+    {
+        $teamUid = $data['teamUid'] ?? '';
+        $membershipUid = $data['membershipUid'] ?? '';
+
+        /**
+         * Test for SUCCESS
+         */
+        $response = $this->client->call(Client::METHOD_GET, '/teams/' . $teamUid . '/memberships/' . $membershipUid, array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()));
+
+        $this->assertEquals(200, $response['headers']['status-code']);
+        $this->assertNotEmpty($response['body']['$id']);
+        $this->assertNotEmpty($response['body']['userId']);
+        $this->assertNotEmpty($response['body']['userName']);
+        $this->assertNotEmpty($response['body']['userEmail']);
+        $this->assertNotEmpty($response['body']['teamId']);
+        $this->assertNotEmpty($response['body']['teamName']);
+        $this->assertCount(2, $response['body']['roles']);
+        $this->assertEquals(true, (new DatetimeValidator())->isValid($response['body']['joined'])); // is null in DB
+        $this->assertEquals(true, $response['body']['confirm']);
+
+        /**
+         * Test for FAILURE
+         */
+
+        $response = $this->client->call(Client::METHOD_GET, '/teams/' . $teamUid . '/memberships/' . $membershipUid . 'dasdasd', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()));
+
+        $this->assertEquals(404, $response['headers']['status-code']);
+
+        $response = $this->client->call(Client::METHOD_GET, '/teams/' . $teamUid . '/memberships/' . $membershipUid, [
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ]);
+
+        $this->assertEquals(401, $response['headers']['status-code']);
+    }
 
     /**
      * @depends testCreateTeam
@@ -61,8 +107,7 @@ trait TeamsBaseServer
         $this->assertEquals($email, $response['body']['userEmail']);
         $this->assertNotEmpty($response['body']['teamId']);
         $this->assertCount(2, $response['body']['roles']);
-        $this->assertIsInt($response['body']['joined']);
-        $this->assertGreaterThan(0, $response['body']['joined']);
+        $this->assertEquals(true, (new DatetimeValidator())->isValid($response['body']['joined']));
         $this->assertEquals(true, $response['body']['confirm']);
 
         $userUid = $response['body']['userId'];
@@ -200,14 +245,12 @@ trait TeamsBaseServer
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()));
 
-
         $this->assertEquals(200, $response['headers']['status-code']);
         $this->assertNotEmpty($response['body']['$id']);
         $this->assertEquals('Arsenal', $response['body']['name']);
         $this->assertEquals(1, $response['body']['total']);
         $this->assertIsInt($response['body']['total']);
-        $this->assertIsInt($response['body']['$createdAt']);
-
+        $this->assertEquals(true, (new DatetimeValidator())->isValid($response['body']['$createdAt']));
 
         /** Delete User */
         $user = $this->client->call(Client::METHOD_DELETE, '/users/' . $userUid, array_merge([
@@ -232,6 +275,6 @@ trait TeamsBaseServer
         $this->assertEquals('Arsenal', $response['body']['name']);
         $this->assertEquals(0, $response['body']['total']);
         $this->assertIsInt($response['body']['total']);
-        $this->assertIsInt($response['body']['$createdAt']);
+        $this->assertEquals(true, (new DatetimeValidator())->isValid($response['body']['$createdAt']));
     }
 }

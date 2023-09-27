@@ -2,13 +2,19 @@
 
 namespace Tests\E2E\Services\Realtime;
 
+use CURLFile;
 use Tests\E2E\Client;
 use Tests\E2E\Scopes\Scope;
 use Tests\E2E\Scopes\ProjectCustom;
 use Tests\E2E\Scopes\SideConsole;
+use Tests\E2E\Services\Functions\FunctionsBase;
+use Utopia\Database\Helpers\ID;
+use Utopia\Database\Helpers\Permission;
+use Utopia\Database\Helpers\Role;
 
 class RealtimeConsoleClientTest extends Scope
 {
+    use FunctionsBase;
     use RealtimeBase;
     use ProjectCustom;
     use SideConsole;
@@ -145,7 +151,7 @@ class RealtimeConsoleClientTest extends Scope
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'databaseId' => 'unique()',
+            'databaseId' => ID::unique(),
             'name' => 'Actors DB',
         ]);
 
@@ -157,11 +163,14 @@ class RealtimeConsoleClientTest extends Scope
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'collectionId' => 'unique()',
+            'collectionId' => ID::unique(),
             'name' => 'Actors',
-            'read' => ['role:all'],
-            'write' => ['role:all'],
-            'permission' => 'collection'
+            'permissions' => [
+                Permission::read(Role::any()),
+                Permission::create(Role::any()),
+                Permission::update(Role::any()),
+                Permission::delete(Role::any()),
+            ],
         ]);
 
         $actorsId = $actors['body']['$id'];
@@ -177,7 +186,7 @@ class RealtimeConsoleClientTest extends Scope
 
         $attributeKey = $name['body']['key'];
 
-        $this->assertEquals($name['headers']['status-code'], 201);
+        $this->assertEquals($name['headers']['status-code'], 202);
         $this->assertEquals($name['body']['key'], 'name');
         $this->assertEquals($name['body']['type'], 'string');
         $this->assertEquals($name['body']['size'], 256);
@@ -266,7 +275,7 @@ class RealtimeConsoleClientTest extends Scope
             ],
         ]);
 
-        $this->assertEquals($index['headers']['status-code'], 201);
+        $this->assertEquals($index['headers']['status-code'], 202);
         $indexKey = $index['body']['key'];
 
         $response = json_decode($client->receive(), true);
@@ -415,6 +424,81 @@ class RealtimeConsoleClientTest extends Scope
         $this->assertContains("databases.{$databaseId}.collections.*.attributes.*.delete", $response['data']['events']);
         $this->assertContains("databases.{$databaseId}.collections.*.attributes.*", $response['data']['events']);
         $this->assertContains("databases.{$databaseId}.collections.*", $response['data']['events']);
+        $this->assertNotEmpty($response['data']['payload']);
+
+        $client->close();
+    }
+
+    public function testCreateDeployment()
+    {
+        $response1 = $this->client->call(Client::METHOD_POST, '/functions', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'functionId' => ID::unique(),
+            'name' => 'Test',
+            'runtime' => 'php-8.0',
+            'entrypoint' => 'index.php',
+            'events' => [
+                'users.*.create',
+                'users.*.delete',
+            ],
+            'schedule' => '0 0 1 1 *',
+            'timeout' => 10
+        ]);
+
+        $functionId = $response1['body']['$id'] ?? '';
+
+        $this->assertEquals(201, $response1['headers']['status-code']);
+
+        $projectId = 'console';
+
+        $client = $this->getWebsocket(['console'], [
+            'origin' => 'http://localhost',
+            'cookie' => 'a_session_console=' . $this->getRoot()['session'],
+        ], $projectId);
+
+        $response = json_decode($client->receive(), true);
+
+        $this->assertArrayHasKey('type', $response);
+        $this->assertArrayHasKey('data', $response);
+        $this->assertEquals('connected', $response['type']);
+        $this->assertNotEmpty($response['data']);
+        $this->assertCount(1, $response['data']['channels']);
+        $this->assertContains('console', $response['data']['channels']);
+        $this->assertNotEmpty($response['data']['user']);
+
+        /**
+         * Test Create Deployment
+         */
+
+        $folder = 'php';
+        $code = realpath(__DIR__ . '/../../../resources/functions') . "/$folder/code.tar.gz";
+        $this->packageCode($folder);
+
+        $deployment = $this->client->call(Client::METHOD_POST, '/functions/' . $functionId . '/deployments', array_merge([
+            'content-type' => 'multipart/form-data',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'entrypoint' => 'index.php',
+            'code' => new CURLFile($code, 'application/x-gzip', \basename($code)),
+            'activate' => true
+        ]);
+
+        $deploymentId = $deployment['body']['$id'] ?? '';
+
+        $this->assertEquals(202, $deployment['headers']['status-code']);
+
+        $response = json_decode($client->receive(), true);
+
+        $this->assertArrayHasKey('type', $response);
+        $this->assertArrayHasKey('data', $response);
+        $this->assertEquals('event', $response['type']);
+        $this->assertNotEmpty($response['data']);
+        $this->assertArrayHasKey('timestamp', $response['data']);
+        $this->assertCount(1, $response['data']['channels']);
+        $this->assertContains('console', $response['data']['channels']);
+        // $this->assertContains("functions.{$functionId}.deployments.{$deploymentId}.create", $response['data']['events']); TODO @christyjacob4 : enable test once we allow functions.* events
         $this->assertNotEmpty($response['data']['payload']);
 
         $client->close();

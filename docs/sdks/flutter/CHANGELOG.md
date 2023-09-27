@@ -1,3 +1,97 @@
+## 11.0.0
+
+* Parameter `url` is now optional in the `createMembership` endpoint
+
+## 10.0.1
+
+* Added a new `label` function to the `Role` helper class
+* Update internal variable names to prevent name collision
+* Fix: content range header inconsistency in chunked uploads [#648](https://github.com/appwrite/sdk-generator/pull/648)
+
+## 10.0.0
+
+* Support for Appwrite 1.4.0
+* New endpoints for fetching user identities
+* New endpoints for listing locale codes
+* Updated documentation
+* Breaking changes:
+  * The `createFunction` method has a new signature.
+  * The `createExecution` method has a new signature.
+  * The `updateFunction` method has a new signature.
+  * The `createDeployment` method no longer requires an entrypoint.
+  * The `updateFile` method now includes the ability to update the file name.
+  * The `updateMembershipRoles` method has been renamed to `updateMembership`.
+
+## 9.0.1
+
+* Added documentation comments
+* Added unit tests
+* Upgraded dependencies
+
+## 9.0.0
+
+* Added relationships support
+* Added support for new queries: `isNull`, `isNotNull`, `startsWith`, `notStartsWith`, `endsWith`, `between` and `select`.
+* Added update attribute support
+* Added team prefs support
+* Changed function create/update `execute` parameter to optional
+* Changed team `update` to `updateName`
+* Changed `Account` service to use the `User` model instead of `Account`
+
+## 8.3.0
+
+* Fix: back navigation bringing back web browser after OAuth session creation
+* Update: Deprecated `InputFile` default constructor and introduced `InputFile.fromPath` and `InputFile.fromBytes` for consistency with other SDKs
+
+## 8.2.2
+
+* Fix: notify callback when websocket closes [#604](https://github.com/appwrite/sdk-generator/pull/604)
+
+## 8.2.1
+
+* Fix OAuth on web
+* Improve helper classes
+
+## 8.2.0
+
+* Support for GraphQL
+
+## 8.1.0
+
+* Role helper update
+
+## 8.0.0
+
+### NEW
+* Support for Appwrite 1.0.0
+* More verbose headers have been included in the Clients - `x-sdk-name`, `x-sdk-platform`, `x-sdk-language`, `x-sdk-version`
+* Helper classes and methods for Permissions, Roles and IDs
+* Helper methods to suport new queries
+* All Dates and times are now returned in the ISO 8601 format
+
+### BREAKING CHANGES
+
+* `databaseId` is no longer part of the `Database` Service constructor. `databaseId` will be part of the respective methods of the database service.
+* `color` attribute is no longer supported in the Avatars Service
+* The `number` argument in phone endpoints have been renamed to `phone`
+* List endpoints no longer support `limit`, `offset`, `cursor`, `cursorDirection`, `orderAttributes`, `orderTypes` as they have been moved to the `queries` array
+* `read` and `write` permission have been deprecated and they are now included in the `permissions` array
+* Renamed methods of the Query helper
+    1.  `lesser` renamed to `lessThan`
+    2.  `lesserEqual` renamed to `lessThanEqual`
+    3.  `greater` renamed to `greaterThan`
+    4.  `greaterEqual` renamed to `greaterThanEqual`
+* `User` response model is now renamed to `Account`
+
+**Full Changelog for Appwrite 1.0.0 can be found here**: 
+https://github.com/appwrite/appwrite/blob/master/CHANGES.md
+
+## 7.0.0
+* **BREAKING** Switched to using [flutter_web_auth_2](https://pub.dev/packages/flutter_web_auth_2), check Getting Started section in Readme for changes (Android and Web will require adjustments for OAuth to work properly)
+* Fixes Concurrent modification issue
+* Upgrade dependencies
+* **Windows** support for OAuth sessions
+
 ## 6.0.0
 * Support for Appwrite 0.15
 * **NEW** Phone authentication `account.createPhoneSession()`

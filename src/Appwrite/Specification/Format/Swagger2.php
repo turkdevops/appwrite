@@ -5,7 +5,10 @@ namespace Appwrite\Specification\Format;
 use Appwrite\Specification\Format;
 use Appwrite\Template\Template;
 use Appwrite\Utopia\Response\Model;
+use Utopia\Database\Helpers\Permission;
+use Utopia\Database\Helpers\Role;
 use Utopia\Validator;
+use Utopia\Validator\Nullable;
 
 class Swagger2 extends Format
 {
@@ -17,15 +20,32 @@ class Swagger2 extends Format
     protected function getNestedModels(Model $model, array &$usedModels): void
     {
         foreach ($model->getRules() as $rule) {
-            if (
-                in_array($model->getType(), $usedModels)
-                && !in_array($rule['type'], ['string', 'integer', 'boolean', 'json', 'float', 'double'])
-            ) {
-                $usedModels[] = $rule['type'];
-                foreach ($this->models as $m) {
-                    if ($m->getType() === $rule['type']) {
-                        $this->getNestedModels($m, $usedModels);
-                        return;
+            if (!in_array($model->getType(), $usedModels)) {
+                continue;
+            }
+
+            if (\is_array($rule['type'])) {
+                foreach ($rule['type'] as $ruleType) {
+                    if (!in_array($ruleType, ['string', 'integer', 'boolean', 'json', 'float'])) {
+                        $usedModels[] = $ruleType;
+
+                        foreach ($this->models as $m) {
+                            if ($m->getType() === $ruleType) {
+                                $this->getNestedModels($m, $usedModels);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (!in_array($rule['type'], ['string', 'integer', 'boolean', 'json', 'float'])) {
+                    $usedModels[] = $rule['type'];
+
+                    foreach ($this->models as $m) {
+                        if ($m->getType() === $rule['type']) {
+                            $this->getNestedModels($m, $usedModels);
+                            continue;
+                        }
                     }
                 }
             }
@@ -152,6 +172,9 @@ class Swagger2 extends Format
                     'scope' => $route->getLabel('scope', ''),
                     'platforms' => $sdkPlatforms,
                     'packaging' => $route->getLabel('sdk.packaging', false),
+                    'offline-model' => $route->getLabel('sdk.offline.model', ''),
+                    'offline-key' => $route->getLabel('sdk.offline.key', ''),
+                    'offline-response-key' => $route->getLabel('sdk.offline.response.key', '$id'),
                 ],
             ];
 
@@ -242,7 +265,12 @@ class Swagger2 extends Format
 
             $bodyRequired = [];
 
-            foreach ($route->getParams() as $name => $param) { // Set params
+            $parameters = \array_merge(
+                $route->getParams(),
+                $route->getLabel('sdk.parameters', []),
+            );
+
+            foreach ($parameters as $name => $param) { // Set params
                 /** @var \Utopia\Validator $validator */
                 $validator = (\is_callable($param['validator'])) ? call_user_func_array($param['validator'], $this->app->getResources($param['injections'])) : $param['validator'];
 
@@ -257,6 +285,14 @@ class Swagger2 extends Format
                         $node['x-global'] = true;
                     }
                 }
+
+                $isNullable = $validator instanceof Nullable;
+
+                if ($isNullable) {
+                    /** @var Nullable $validator */
+                    $validator = $validator->getValidator();
+                }
+
 
                 switch ((!empty($validator)) ? \get_class($validator) : '') {
                     case 'Utopia\Validator\Text':
@@ -278,12 +314,17 @@ class Swagger2 extends Format
                         $node['type'] = $validator->getType();
                         $node['x-example'] = '[' . \strtoupper(Template::fromCamelCaseToSnake($node['name'])) . ']';
                         break;
+                    case 'Utopia\Database\Validator\DatetimeValidator':
+                        $node['type'] = $validator->getType();
+                        $node['format'] = 'datetime';
+                        $node['x-example'] = Model::TYPE_DATETIME_EXAMPLE;
+                        break;
                     case 'Appwrite\Network\Validator\Email':
                         $node['type'] = $validator->getType();
                         $node['format'] = 'email';
                         $node['x-example'] = 'email@example.com';
                         break;
-                    case 'Appwrite\Network\Validator\URL':
+                    case 'Utopia\Validator\URL':
                         $node['type'] = $validator->getType();
                         $node['format'] = 'url';
                         $node['x-example'] = 'https://example.com';
@@ -300,6 +341,25 @@ class Swagger2 extends Format
                         $node['type'] = 'file';
                         break;
                     case 'Utopia\Validator\ArrayList':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Buckets':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Collections':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Indexes':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Attributes':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Databases':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Deployments':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Installations':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Documents':
+                    case 'Utopia\Database\Validator\Queries\Documents':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Executions':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Files':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Functions':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Rules':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Memberships':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Projects':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Teams':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Users':
+                    case 'Appwrite\Utopia\Database\Validator\Queries\Variables':
+                    case 'Utopia\Database\Validator\Queries':
                         $node['type'] = 'array';
                         $node['collectionFormat'] = 'multi';
                         $node['items'] = [
@@ -312,12 +372,25 @@ class Swagger2 extends Format
                         $node['items'] = [
                             'type' => 'string',
                         ];
-                        $node['x-example'] = '["role:all"]';
+                        $node['x-example'] = '["' . Permission::read(Role::any()) . '"]';
+                        break;
+                    case 'Utopia\Database\Validator\Roles':
+                        $node['type'] = $validator->getType();
+                        $node['collectionFormat'] = 'multi';
+                        $node['items'] = [
+                            'type' => 'string',
+                        ];
+                        $node['x-example'] = '["' . Role::any()->toString() . '"]';
                         break;
                     case 'Appwrite\Auth\Validator\Password':
                         $node['type'] = $validator->getType();
                         $node['format'] = 'password';
                         $node['x-example'] = 'password';
+                        break;
+                    case 'Appwrite\Auth\Validator\Phone':
+                        $node['type'] = $validator->getType();
+                        $node['format'] = 'phone';
+                        $node['x-example'] = '+12065550100';
                         break;
                     case 'Utopia\Validator\Range':
                         /** @var \Utopia\Validator\Range $validator */
@@ -337,7 +410,7 @@ class Swagger2 extends Format
                     case 'Utopia\Validator\Length':
                         $node['type'] = $validator->getType();
                         break;
-                    case 'Appwrite\Network\Validator\Host':
+                    case 'Utopia\Validator\Host':
                         $node['type'] = $validator->getType();
                         $node['format'] = 'url';
                         $node['x-example'] = 'https://example.com';
@@ -346,6 +419,22 @@ class Swagger2 extends Format
                         /** @var \Utopia\Validator\WhiteList $validator */
                         $node['type'] = $validator->getType();
                         $node['x-example'] = $validator->getList()[0];
+
+                        //Iterate from the blackList. If it matches with the current one, then it is a blackList
+                        // Do not add the enum
+                        $allowed = true;
+                        foreach ($this->enumBlacklist as $blacklist) {
+                            if ($blacklist['namespace'] == $route->getLabel('sdk.namespace', '') && $blacklist['method'] == $route->getLabel('sdk.method', '') && $blacklist['parameter'] == $name) {
+                                $allowed = false;
+                                break;
+                            }
+                        }
+
+                        if ($allowed) {
+                            $node['enum'] = $validator->getList();
+                            $node['x-enum-name'] = $this->getEnumName($route->getLabel('sdk.namespace', ''), $route->getLabel('sdk.method', ''), $name);
+                            $node['x-enum-keys'] = $this->getEnumKeys($route->getLabel('sdk.namespace', ''), $route->getLabel('sdk.method', ''), $name);
+                        }
 
                         if ($validator->getType() === 'integer') {
                             $node['format'] = 'int32';
@@ -385,8 +474,19 @@ class Swagger2 extends Format
                         'x-example' => $node['x-example'] ?? null,
                     ];
 
+                    if (isset($node['enum'])) {
+                        /// If the enum flag is Set, add the enum values to the body
+                        $body['schema']['properties'][$name]['enum'] = $node['enum'];
+                        $body['schema']['properties'][$name]['x-enum-name'] = $node['x-enum-name'] ?? null;
+                        $body['schema']['properties'][$name]['x-enum-keys'] = $node['x-enum-keys'] ?? null;
+                    }
+
                     if ($node['x-global'] ?? false) {
                         $body['schema']['properties'][$name]['x-global'] = true;
+                    }
+
+                    if ($isNullable) {
+                        $body['schema']['properties'][$name]['x-nullable'] = true;
                     }
 
                     if (\array_key_exists('items', $node)) {
@@ -446,6 +546,7 @@ class Swagger2 extends Format
 
                 switch ($rule['type']) {
                     case 'string':
+                    case 'datetime':
                         $type = 'string';
                         break;
 

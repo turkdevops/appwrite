@@ -1,6 +1,5 @@
 <?php
 
-use Appwrite\Event\Event;
 use Appwrite\Resque\Worker;
 use Utopia\Audit\Audit;
 use Utopia\CLI\Console;
@@ -24,7 +23,7 @@ class AuditsV1 extends Worker
 
     public function run(): void
     {
-        $events = $this->args['events'];
+        $event = $this->args['event'];
         $payload = $this->args['payload'];
         $mode = $this->args['mode'];
         $resource = $this->args['resource'];
@@ -37,17 +36,18 @@ class AuditsV1 extends Worker
         $userName = $user->getAttribute('name', '');
         $userEmail = $user->getAttribute('email', '');
 
-        $dbForProject = $this->getProjectDB($project->getId());
+        $dbForProject = $this->getProjectDB($project);
         $audit = new Audit($dbForProject);
         $audit->log(
-            userId: $user->getId(),
+            userId: $user->getInternalId(),
             // Pass first, most verbose event pattern
-            event: $events[0],
+            event: $event,
             resource: $resource,
             userAgent: $userAgent,
             ip: $ip,
             location: '',
             data: [
+                'userId' => $user->getId(),
                 'userName' => $userName,
                 'userEmail' => $userEmail,
                 'mode' => $mode,

@@ -1,520 +1,75 @@
 <?php
 
 use Appwrite\Extend\Exception;
+use Appwrite\Utopia\Request;
 use Appwrite\Utopia\Response;
-use Appwrite\Utopia\View;
 use Utopia\App;
-use Utopia\Config\Config;
-use Utopia\Domains\Domain;
-use Utopia\Database\Validator\UID;
-use Utopia\Storage\Storage;
 
 App::init()
-    ->groups(['console'])
-    ->inject('layout')
-    ->action(function (View $layout) {
-        $layout
-            ->setParam('description', 'Appwrite Console allows you to easily manage, monitor, and control your entire backend API and tools.')
-            ->setParam('analytics', 'UA-26264668-5')
-        ;
-    });
-
-App::shutdown()
-    ->groups(['console'])
+    ->groups(['web'])
+    ->inject('request')
     ->inject('response')
-    ->inject('layout')
-    ->action(function (Response $response, View $layout) {
-        $header = new View(__DIR__ . '/../../views/console/comps/header.phtml');
-        $footer = new View(__DIR__ . '/../../views/console/comps/footer.phtml');
-
-        $footer
-            ->setParam('home', App::getEnv('_APP_HOME', ''))
-            ->setParam('version', App::getEnv('_APP_VERSION', 'UNKNOWN'))
+    ->action(function (Request $request, Response $response) {
+        $response
+            ->addHeader('X-Frame-Options', 'SAMEORIGIN') // Avoid console and homepage from showing in iframes
+            ->addHeader('X-XSS-Protection', '1; mode=block; report=/v1/xss?url=' . \urlencode($request->getURI()))
+            ->addHeader('X-UA-Compatible', 'IE=Edge') // Deny IE browsers from going into quirks mode
         ;
-
-        $layout
-            ->setParam('header', [$header])
-            ->setParam('footer', [$footer])
-        ;
-
-        $response->html($layout->render());
     });
 
-App::get('/error/:code')
-    ->groups(['web', 'console'])
+App::get('/console/*')
+    ->alias('/')
+    ->alias('auth/*')
+    ->alias('/invite')
+    ->alias('/login')
+    ->alias('/card/*')
+    ->alias('/recover')
+    ->alias('/register/*')
+    ->groups(['web'])
     ->label('permission', 'public')
     ->label('scope', 'home')
-    ->param('code', null, new \Utopia\Validator\Numeric(), 'Valid status code number', false)
-    ->inject('layout')
-    ->action(function (int $code, View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/error.phtml');
-
-        $page
-            ->setParam('code', $code)
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Error')
-            ->setParam('body', $page);
-    });
-
-App::get('/console')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/index.phtml');
-
-        $page
-            ->setParam('home', App::getEnv('_APP_HOME', ''))
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Console')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/account')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/account/index.phtml');
-
-        $cc = new View(__DIR__ . '/../../views/console/forms/credit-card.phtml');
-
-        $page
-            ->setParam('cc', $cc)
-        ;
-
-        $layout
-            ->setParam('title', 'Account - ' . APP_NAME)
-            ->setParam('body', $page);
-    });
-
-App::get('/console/notifications')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/v1/console/notifications/index.phtml');
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Notifications')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/home')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/home/index.phtml');
-        $page
-            ->setParam('usageStatsEnabled', App::getEnv('_APP_USAGE_STATS', 'enabled') == 'enabled');
-        $layout
-            ->setParam('title', APP_NAME . ' - Console')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/settings')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $target = new Domain(App::getEnv('_APP_DOMAIN_TARGET', ''));
-
-        $page = new View(__DIR__ . '/../../views/console/settings/index.phtml');
-
-        $page->setParam('services', array_filter(Config::getParam('services'), fn($element) => $element['optional']))
-            ->setParam('customDomainsEnabled', ($target->isKnown() && !$target->isTest()))
-            ->setParam('customDomainsTarget', $target->get())
-            ->setParam('smtpEnabled', (!empty(App::getEnv('_APP_SMTP_HOST'))))
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Settings')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/webhooks')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/webhooks/index.phtml');
-
-        $page->setParam('events', Config::getParam('events', []));
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Webhooks')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/webhooks/webhook')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->param('id', '', new UID(), 'Webhook unique ID.')
-    ->inject('layout')
-    ->action(function (string $id, View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/webhooks/webhook.phtml');
-
-        $page
-            ->setParam('events', Config::getParam('events', []))
-            ->setParam('new', false)
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Webhooks')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/webhooks/webhook/new')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/webhooks/webhook.phtml');
-
-        $page
-            ->setParam('events', Config::getParam('events', []))
-            ->setParam('new', true)
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Webhooks')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/keys')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $scopes = array_keys(Config::getParam('scopes'));
-        $page = new View(__DIR__ . '/../../views/console/keys/index.phtml');
-
-        $page->setParam('scopes', $scopes);
-
-        $layout
-            ->setParam('title', APP_NAME . ' - API Keys')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/databases')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/databases/index.phtml');
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Database')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/databases/database')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->param('id', '', new UID(), 'Database unique ID.')
+    ->inject('request')
     ->inject('response')
-    ->inject('layout')
-    ->action(function (string $id, Response $response, View $layout) {
+    ->action(function (Request $request, Response $response) {
+        $fallback = file_get_contents(__DIR__ . '/../../../console/index.html');
 
-        $logs = new View(__DIR__ . '/../../views/console/comps/logs.phtml');
+        // Card SSR
+        if (\str_starts_with($request->getURI(), '/card')) {
+            $urlCunks = \explode('/', $request->getURI());
+            $userId = $urlCunks[\count($urlCunks) - 1] ?? '';
 
-        $logs
-            ->setParam('interval', App::getEnv('_APP_MAINTENANCE_RETENTION_AUDIT', 0))
-            ->setParam('method', 'database.listLogs')
-            ->setParam('params', [
-                'database-id' => '{{router.params.id}}',
-            ])
-        ;
+            $domain = $request->getProtocol() . '://' . $request->getHostname();
 
-        $page = new View(__DIR__ . '/../../views/console/databases/database.phtml');
-
-        $page->setParam('logs', $logs);
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Database')
-            ->setParam('body', $page)
-        ;
-
-        $response
-            ->addHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-            ->addHeader('Expires', 0)
-            ->addHeader('Pragma', 'no-cache')
-        ;
-    });
-
-App::get('/console/databases/collection')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->param('id', '', new UID(), 'Collection unique ID.')
-    ->inject('response')
-    ->inject('layout')
-    ->action(function (string $id, Response $response, View $layout) {
-
-        $logs = new View(__DIR__ . '/../../views/console/comps/logs.phtml');
-
-        $logs
-            ->setParam('interval', App::getEnv('_APP_MAINTENANCE_RETENTION_AUDIT', 0))
-            ->setParam('method', 'databases.listCollectionLogs')
-            ->setParam('params', [
-                'collection-id' => '{{router.params.id}}',
-                'database-id' => '{{router.params.databaseId}}'
-            ])
-        ;
-
-        $page = new View(__DIR__ . '/../../views/console/databases/collection.phtml');
-
-        $page->setParam('logs', $logs);
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Database Collection')
-            ->setParam('body', $page)
-        ;
-
-        $response
-            ->addHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-            ->addHeader('Expires', 0)
-            ->addHeader('Pragma', 'no-cache')
-        ;
-    });
-
-App::get('/console/databases/document')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->param('databaseId', '', new UID(), 'Database unique ID.')
-    ->param('collection', '', new UID(), 'Collection unique ID.')
-    ->inject('layout')
-    ->action(function (string $databaseId, string $collection, View $layout) {
-
-        $logs = new View(__DIR__ . '/../../views/console/comps/logs.phtml');
-
-        $logs
-            ->setParam('interval', App::getEnv('_APP_MAINTENANCE_RETENTION_AUDIT', 0))
-            ->setParam('method', 'databases.listDocumentLogs')
-            ->setParam('params', [
-                'database-id' => '{{router.params.databaseId}}',
-                'collection-id' => '{{router.params.collection}}',
-                'document-id' => '{{router.params.id}}',
-            ])
-        ;
-
-        $page = new View(__DIR__ . '/../../views/console/databases/document.phtml');
-
-        $page
-            ->setParam('new', false)
-            ->setParam('database', $databaseId)
-            ->setParam('collection', $collection)
-            ->setParam('logs', $logs)
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Database Document')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/databases/document/new')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->param('databaseId', '', new UID(), 'Database unique ID.')
-    ->param('collection', '', new UID(), 'Collection unique ID.')
-    ->inject('layout')
-    ->action(function (string $databaseId, string $collection, View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/databases/document.phtml');
-
-        $page
-            ->setParam('new', true)
-            ->setParam('database', $databaseId)
-            ->setParam('collection', $collection)
-            ->setParam('logs', new View())
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Database Document')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/storage')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/storage/index.phtml');
-
-        $page
-            ->setParam('home', App::getEnv('_APP_HOME', 0))
-            ->setParam('fileLimit', App::getEnv('_APP_STORAGE_LIMIT', 0))
-            ->setParam('fileLimitHuman', Storage::human(App::getEnv('_APP_STORAGE_LIMIT', 0)))
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Storage')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/storage/bucket')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->param('id', '', new UID(), 'Bucket unique ID.')
-    ->inject('response')
-    ->inject('layout')
-    ->action(function (string $id, Response $response, View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/storage/bucket.phtml');
-        $page
-            ->setParam('home', App::getEnv('_APP_HOME', 0))
-            ->setParam('fileLimit', App::getEnv('_APP_STORAGE_LIMIT', 0))
-            ->setParam('fileLimitHuman', Storage::human(App::getEnv('_APP_STORAGE_LIMIT', 0)))
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Storage Buckets')
-            ->setParam('body', $page)
-        ;
-
-        $response
-            ->addHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-            ->addHeader('Expires', 0)
-            ->addHeader('Pragma', 'no-cache')
-        ;
-    });
-
-App::get('/console/users')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/users/index.phtml');
-
-        $page
-            ->setParam('auth', Config::getParam('auth'))
-            ->setParam('providers', Config::getParam('providers'))
-            ->setParam('smtpEnabled', (!empty(App::getEnv('_APP_SMTP_HOST'))))
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Users')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/users/user')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/users/user.phtml');
-
-        $layout
-            ->setParam('title', APP_NAME . ' - User')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/users/teams/team')
-    ->groups(['web', 'console'])
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-
-        $page = new View(__DIR__ . '/../../views/console/users/team.phtml');
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Team')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/functions')
-    ->groups(['web', 'console'])
-    ->desc('Platform console project functions')
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-        $page = new View(__DIR__ . '/../../views/console/functions/index.phtml');
-
-        $page
-            ->setParam('runtimes', Config::getParam('runtimes'))
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Functions')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/functions/function')
-    ->groups(['web', 'console'])
-    ->desc('Platform console project function')
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('layout')
-    ->action(function (View $layout) {
-        $page = new View(__DIR__ . '/../../views/console/functions/function.phtml');
-
-        $page
-            ->setParam('events', Config::getParam('events', []))
-            ->setParam('fileLimit', App::getEnv('_APP_STORAGE_LIMIT', 0))
-            ->setParam('fileLimitHuman', Storage::human(App::getEnv('_APP_STORAGE_LIMIT', 0)))
-            ->setParam('timeout', (int) App::getEnv('_APP_FUNCTIONS_TIMEOUT', 900))
-            ->setParam('usageStatsEnabled', App::getEnv('_APP_USAGE_STATS', 'enabled') == 'enabled');
-        ;
-
-        $layout
-            ->setParam('title', APP_NAME . ' - Function')
-            ->setParam('body', $page);
-    });
-
-App::get('/console/version')
-    ->groups(['web', 'console'])
-    ->desc('Check for new version')
-    ->label('permission', 'public')
-    ->label('scope', 'console')
-    ->inject('response')
-    ->action(function ($response) {
-        try {
-            $version = \json_decode(@\file_get_contents(App::getEnv('_APP_HOME', 'http://localhost') . '/v1/health/version'), true);
-
-            if ($version && isset($version['version'])) {
-                return $response->json(['version' => $version['version']]);
+            if (!empty($userId)) {
+                $ogImageUrl = $domain . '/v1/cards/cloud-og?userId=' . $userId;
             } else {
-                throw new Exception('Failed to check for a newer version', 500, Exception::GENERAL_SERVER_ERROR);
+                $ogImageUrl = $domain . '/v1/cards/cloud-og?mock=normal';
             }
-        } catch (\Throwable $th) {
-            throw new Exception('Failed to check for a newer version', 500, Exception::GENERAL_SERVER_ERROR);
+
+            $ogTags = [
+                '<title>Appwrite Cloud Card</title>',
+                '<meta name="description" content="Appwrite Cloud is now LIVE! Share your Cloud card for a chance to win an exclusive Cloud hoodie!">',
+                '<meta property="og:url" content="' . $domain . $request->getURI() . '">',
+                '<meta name="og:image:type" content="image/png">',
+                '<meta name="og:image:width" content="1008">',
+                '<meta name="og:image:height" content="1008">',
+                '<meta property="og:type" content="website">',
+                '<meta property="og:title" content="Appwrite Cloud Card">',
+                '<meta property="og:description" content="Appwrite Cloud is now LIVE! Share your Cloud card for a chance to win an exclusive Cloud hoodie!">',
+                '<meta property="og:image" content="' . $ogImageUrl . '">',
+                '<meta name="twitter:card" content="summary_large_image">',
+                '<meta property="twitter:domain" content="' . $request->getHostname() . '">',
+                '<meta property="twitter:url" content="' . $domain . $request->getURI() . '">',
+                '<meta name="twitter:title" content="Appwrite Cloud Card">',
+                '<meta name="twitter:image:type" content="image/png">',
+                '<meta name="twitter:image:width" content="1008">',
+                '<meta name="twitter:image:height" content="1008">',
+                '<meta name="twitter:description" content="Appwrite Cloud is now LIVE! Share your Cloud card for a chance to win an exclusive Cloud hoodie!">',
+                '<meta name="twitter:image" content="' . $ogImageUrl . '">',
+            ];
+
+            $fallback = \str_replace('<!-- {{CLOUD_OG}} -->', \implode('', $ogTags), $fallback);
         }
+
+        $response->html($fallback);
     });

@@ -6,34 +6,115 @@ use Appwrite\Auth\Validator\Phone;
 use Appwrite\Detector\Detector;
 use Appwrite\Event\Delete;
 use Appwrite\Event\Event;
-use Appwrite\Event\Audit as EventAudit;
 use Appwrite\Network\Validator\Email;
-use Appwrite\Stats\Stats;
 use Appwrite\Utopia\Database\Validator\CustomId;
+use Appwrite\Utopia\Database\Validator\Queries\Identities;
+use Utopia\Database\Validator\Queries;
+use Appwrite\Utopia\Database\Validator\Queries\Users;
+use Utopia\Database\Validator\Query\Limit;
+use Utopia\Database\Validator\Query\Offset;
 use Appwrite\Utopia\Response;
 use Utopia\App;
 use Utopia\Audit\Audit;
 use Utopia\Config\Config;
+use Utopia\Database\Helpers\ID;
+use Utopia\Database\Helpers\Permission;
+use Utopia\Database\Helpers\Role;
 use Utopia\Locale\Locale;
 use Appwrite\Extend\Exception;
 use Utopia\Database\Document;
+use Utopia\Database\DateTime;
 use Utopia\Database\Exception\Duplicate;
 use Utopia\Database\Validator\UID;
 use Utopia\Database\Database;
 use Utopia\Database\Query;
 use Utopia\Database\Validator\Authorization;
+use Utopia\Validator\ArrayList;
 use Utopia\Validator\Assoc;
 use Utopia\Validator\WhiteList;
 use Utopia\Validator\Text;
-use Utopia\Validator\Range;
 use Utopia\Validator\Boolean;
 use MaxMind\Db\Reader;
+use Utopia\Validator\Integer;
+use Appwrite\Auth\Validator\PasswordHistory;
+use Appwrite\Auth\Validator\PasswordDictionary;
+use Appwrite\Auth\Validator\PersonalData;
+
+/** TODO: Remove function when we move to using utopia/platform */
+function createUser(string $hash, mixed $hashOptions, string $userId, ?string $email, ?string $password, ?string $phone, string $name, Document $project, Database $dbForProject, Event $events): Document
+{
+    $hashOptionsObject = (\is_string($hashOptions)) ? \json_decode($hashOptions, true) : $hashOptions; // Cast to JSON array
+    $passwordHistory = $project->getAttribute('auths', [])['passwordHistory'] ?? 0;
+
+    if (!empty($email)) {
+        $email = \strtolower($email);
+
+        // Makes sure this email is not already used in another identity
+        $identityWithMatchingEmail = $dbForProject->findOne('identities', [
+            Query::equal('providerEmail', [$email]),
+        ]);
+        if ($identityWithMatchingEmail !== false && !$identityWithMatchingEmail->isEmpty()) {
+            throw new Exception(Exception::USER_EMAIL_ALREADY_EXISTS);
+        }
+    }
+
+    try {
+        $userId = $userId == 'unique()'
+            ? ID::unique()
+            : ID::custom($userId);
+
+        if ($project->getAttribute('auths', [])['personalDataCheck'] ?? false) {
+            $personalDataValidator = new PersonalData($userId, $email, $name, $phone);
+            if (!$personalDataValidator->isValid($password)) {
+                throw new Exception(Exception::USER_PASSWORD_PERSONAL_DATA);
+            }
+        }
+
+        $password = (!empty($password)) ? ($hash === 'plaintext' ? Auth::passwordHash($password, $hash, $hashOptionsObject) : $password) : null;
+        $user = $dbForProject->createDocument('users', new Document([
+            '$id' => $userId,
+            '$permissions' => [
+                Permission::read(Role::any()),
+                Permission::update(Role::user($userId)),
+                Permission::delete(Role::user($userId)),
+            ],
+            'email' => $email,
+            'emailVerification' => false,
+            'phone' => $phone,
+            'phoneVerification' => false,
+            'status' => true,
+            'labels' => [],
+            'password' => $password,
+            'passwordHistory' => is_null($password) && $passwordHistory === 0 ? [] : [$password],
+            'passwordUpdate' => (!empty($password)) ? DateTime::now() : null,
+            'hash' => $hash === 'plaintext' ? Auth::DEFAULT_ALGO : $hash,
+            'hashOptions' => $hash === 'plaintext' ? Auth::DEFAULT_ALGO_OPTIONS : $hashOptionsObject + ['type' => $hash],
+            'registration' => DateTime::now(),
+            'reset' => false,
+            'name' => $name,
+            'prefs' => new \stdClass(),
+            'sessions' => null,
+            'tokens' => null,
+            'memberships' => null,
+            'search' => implode(' ', [$userId, $email, $phone, $name]),
+        ]));
+    } catch (Duplicate $th) {
+        throw new Exception(Exception::USER_ALREADY_EXISTS);
+    }
+
+    $events->setParam('userId', $user->getId());
+
+    return $user;
+}
 
 App::post('/v1/users')
-    ->desc('Create User')
+    ->desc('Create user')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].create')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'create')
@@ -41,58 +122,269 @@ App::post('/v1/users')
     ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_USER)
-    ->param('userId', '', new CustomId(), 'User ID. Choose your own unique ID or pass the string "unique()" to auto generate it. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
-    ->param('email', '', new Email(), 'User email.')
-    ->param('password', '', new Password(), 'User password. Must be at least 8 chars.')
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', null, new Email(), 'User email.', true)
+    ->param('phone', null, new Phone(), 'Phone number. Format this number with a leading \'+\' and a country code, e.g., +16175551212.', true)
+    ->param('password', '', fn ($project, $passwordsDictionary) => new PasswordDictionary($passwordsDictionary, $project->getAttribute('auths', [])['passwordDictionary'] ?? false), 'Plain text user password. Must be at least 8 chars.', true, ['project', 'passwordsDictionary'])
     ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
     ->inject('response')
+    ->inject('project')
     ->inject('dbForProject')
-    ->inject('usage')
     ->inject('events')
-    ->action(function (string $userId, string $email, string $password, string $name, Response $response, Database $dbForProject, Stats $usage, Event $events) {
+    ->action(function (string $userId, ?string $email, ?string $phone, ?string $password, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
 
-        $email = \strtolower($email);
+        $user = createUser('plaintext', '{}', $userId, $email, $password, $phone, $name, $project, $dbForProject, $events);
 
-        try {
-            $userId = $userId == 'unique()' ? $dbForProject->getId() : $userId;
-            $user = $dbForProject->createDocument('users', new Document([
-                '$id' => $userId,
-                '$read' => ['role:all'],
-                '$write' => ['user:' . $userId],
-                'email' => $email,
-                'emailVerification' => false,
-                'status' => true,
-                'password' => Auth::passwordHash($password),
-                'passwordUpdate' => \time(),
-                'registration' => \time(),
-                'reset' => false,
-                'name' => $name,
-                'prefs' => new \stdClass(),
-                'sessions' => null,
-                'tokens' => null,
-                'memberships' => null,
-                'search' => implode(' ', [$userId, $email, $name])
-            ]));
-        } catch (Duplicate $th) {
-            throw new Exception('Account already exists', 409, Exception::USER_ALREADY_EXISTS);
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
+
+App::post('/v1/users/bcrypt')
+    ->desc('Create user with bcrypt password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createBcryptUser')
+    ->label('sdk.description', '/docs/references/users/create-bcrypt-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using Bcrypt.')
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $user = createUser('bcrypt', '{}', $userId, $email, $password, null, $name, $project, $dbForProject, $events);
+
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
+
+App::post('/v1/users/md5')
+    ->desc('Create user with MD5 password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createMD5User')
+    ->label('sdk.description', '/docs/references/users/create-md5-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using MD5.')
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $user = createUser('md5', '{}', $userId, $email, $password, null, $name, $project, $dbForProject, $events);
+
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
+
+App::post('/v1/users/argon2')
+    ->desc('Create user with Argon2 password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createArgon2User')
+    ->label('sdk.description', '/docs/references/users/create-argon2-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using Argon2.')
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $user = createUser('argon2', '{}', $userId, $email, $password, null, $name, $project, $dbForProject, $events);
+
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
+
+App::post('/v1/users/sha')
+    ->desc('Create user with SHA password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createSHAUser')
+    ->label('sdk.description', '/docs/references/users/create-sha-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using SHA.')
+    ->param('passwordVersion', '', new WhiteList(['sha1', 'sha224', 'sha256', 'sha384', 'sha512/224', 'sha512/256', 'sha512', 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512']), "Optional SHA version used to hash password. Allowed values are: 'sha1', 'sha224', 'sha256', 'sha384', 'sha512/224', 'sha512/256', 'sha512', 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512'", true)
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $passwordVersion, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $options = '{}';
+
+        if (!empty($passwordVersion)) {
+            $options = '{"version":"' . $passwordVersion . '"}';
         }
 
-        $usage
-            ->setParam('users.create', 1)
-        ;
+        $user = createUser('sha', $options, $userId, $email, $password, null, $name, $project, $dbForProject, $events);
 
-        $events
-            ->setParam('userId', $user->getId())
-        ;
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
 
-        $response->setStatusCode(Response::STATUS_CODE_CREATED);
-        $response->dynamic($user, Response::MODEL_USER);
+App::post('/v1/users/phpass')
+    ->desc('Create user with PHPass password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createPHPassUser')
+    ->label('sdk.description', '/docs/references/users/create-phpass-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or pass the string `ID.unique()`to auto generate it. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using PHPass.')
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $user = createUser('phpass', '{}', $userId, $email, $password, null, $name, $project, $dbForProject, $events);
+
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
+
+App::post('/v1/users/scrypt')
+    ->desc('Create user with Scrypt password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createScryptUser')
+    ->label('sdk.description', '/docs/references/users/create-scrypt-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using Scrypt.')
+    ->param('passwordSalt', '', new Text(128), 'Optional salt used to hash password.')
+    ->param('passwordCpu', 8, new Integer(), 'Optional CPU cost used to hash password.')
+    ->param('passwordMemory', 14, new Integer(), 'Optional memory cost used to hash password.')
+    ->param('passwordParallel', 1, new Integer(), 'Optional parallelization cost used to hash password.')
+    ->param('passwordLength', 64, new Integer(), 'Optional hash length used to hash password.')
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $passwordSalt, int $passwordCpu, int $passwordMemory, int $passwordParallel, int $passwordLength, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $options = [
+            'salt' => $passwordSalt,
+            'costCpu' => $passwordCpu,
+            'costMemory' => $passwordMemory,
+            'costParallel' => $passwordParallel,
+            'length' => $passwordLength
+        ];
+
+        $user = createUser('scrypt', \json_encode($options), $userId, $email, $password, null, $name, $project, $dbForProject, $events);
+
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
+    });
+
+App::post('/v1/users/scrypt-modified')
+    ->desc('Create user with Scrypt modified password')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].create')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'user.create')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.create')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'createScryptModifiedUser')
+    ->label('sdk.description', '/docs/references/users/create-scrypt-modified-user.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_CREATED)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new CustomId(), 'User ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
+    ->param('email', '', new Email(), 'User email.')
+    ->param('password', '', new Password(), 'User password hashed using Scrypt Modified.')
+    ->param('passwordSalt', '', new Text(128), 'Salt used to hash password.')
+    ->param('passwordSaltSeparator', '', new Text(128), 'Salt separator used to hash password.')
+    ->param('passwordSignerKey', '', new Text(128), 'Signer key used to hash password.')
+    ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
+    ->inject('response')
+    ->inject('project')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, string $email, string $password, string $passwordSalt, string $passwordSaltSeparator, string $passwordSignerKey, string $name, Response $response, Document $project, Database $dbForProject, Event $events) {
+        $user = createUser('scryptMod', '{"signerKey":"' . $passwordSignerKey . '","saltSeparator":"' . $passwordSaltSeparator . '","salt":"' . $passwordSalt . '"}', $userId, $email, $password, null, $name, $project, $dbForProject, $events);
+
+        $response
+            ->setStatusCode(Response::STATUS_CODE_CREATED)
+            ->dynamic($user, Response::MODEL_USER);
     });
 
 App::get('/v1/users')
-    ->desc('List Users')
+    ->desc('List users')
     ->groups(['api', 'users'])
     ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'list')
@@ -100,45 +392,48 @@ App::get('/v1/users')
     ->label('sdk.response.code', Response::STATUS_CODE_OK)
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_USER_LIST)
+    ->param('queries', [], new Users(), 'Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of ' . APP_LIMIT_ARRAY_PARAMS_SIZE . ' queries are allowed, each ' . APP_LIMIT_ARRAY_ELEMENT_SIZE . ' characters long. You may filter on the following attributes: ' . implode(', ', Users::ALLOWED_ATTRIBUTES), true)
     ->param('search', '', new Text(256), 'Search term to filter your list results. Max length: 256 chars.', true)
-    ->param('limit', 25, new Range(0, 100), 'Maximum number of users to return in response. By default will return maximum 25 results. Maximum of 100 results allowed per request.', true)
-    ->param('offset', 0, new Range(0, APP_LIMIT_COUNT), 'Offset value. The default value is 0. Use this param to manage pagination. [learn more about pagination](https://appwrite.io/docs/pagination)', true)
-    ->param('cursor', '', new UID(), 'ID of the user used as the starting point for the query, excluding the user itself. Should be used for efficient pagination when working with large sets of data. [learn more about pagination](https://appwrite.io/docs/pagination)', true)
-    ->param('cursorDirection', Database::CURSOR_AFTER, new WhiteList([Database::CURSOR_AFTER, Database::CURSOR_BEFORE]), 'Direction of the cursor, can be either \'before\' or \'after\'.', true)
-    ->param('orderType', 'ASC', new WhiteList(['ASC', 'DESC'], true), 'Order result by ASC or DESC order.', true)
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
-    ->action(function (string $search, int $limit, int $offset, string $cursor, string $cursorDirection, string $orderType, Response $response, Database $dbForProject, Stats $usage) {
+    ->action(function (array $queries, string $search, Response $response, Database $dbForProject) {
 
-        if (!empty($cursor)) {
-            $cursorUser = $dbForProject->getDocument('users', $cursor);
-
-            if ($cursorUser->isEmpty()) {
-                throw new Exception("User '{$cursor}' for the 'cursor' value not found.", 400, Exception::GENERAL_CURSOR_NOT_FOUND);
-            }
-        }
-
-        $queries = [];
+        $queries = Query::parseQueries($queries);
 
         if (!empty($search)) {
-            $queries[] = new Query('search', Query::TYPE_SEARCH, [$search]);
+            $queries[] = Query::search('search', $search);
         }
 
-        $usage
-            ->setParam('users.read', 1)
-        ;
+        // Get cursor document if there was a cursor query
+        $cursor = \array_filter($queries, function ($query) {
+            return \in_array($query->getMethod(), [Query::TYPE_CURSORAFTER, Query::TYPE_CURSORBEFORE]);
+        });
+        $cursor = reset($cursor);
+        if ($cursor) {
+            /** @var Query $cursor */
+            $userId = $cursor->getValue();
+            $cursorDocument = $dbForProject->getDocument('users', $userId);
+
+            if ($cursorDocument->isEmpty()) {
+                throw new Exception(Exception::GENERAL_CURSOR_NOT_FOUND, "User '{$userId}' for the 'cursor' value not found.");
+            }
+
+            $cursor->setValue($cursorDocument);
+        }
+
+        $filterQueries = Query::groupByType($queries)['filters'];
 
         $response->dynamic(new Document([
-            'users' => $dbForProject->find('users', $queries, $limit, $offset, [], [$orderType], $cursorUser ?? null, $cursorDirection),
-            'total' => $dbForProject->count('users', $queries, APP_LIMIT_COUNT),
+            'users' => $dbForProject->find('users', $queries),
+            'total' => $dbForProject->count('users', $filterQueries, APP_LIMIT_COUNT),
         ]), Response::MODEL_USER_LIST);
     });
 
 App::get('/v1/users/:userId')
-    ->desc('Get User')
+    ->desc('Get user')
     ->groups(['api', 'users'])
     ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'get')
@@ -149,25 +444,22 @@ App::get('/v1/users/:userId')
     ->param('userId', '', new UID(), 'User ID.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
-    ->action(function (string $userId, Response $response, Database $dbForProject, Stats $usage) {
+    ->action(function (string $userId, Response $response, Database $dbForProject) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
-        $usage
-            ->setParam('users.read', 1)
-        ;
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::get('/v1/users/:userId/prefs')
-    ->desc('Get User Preferences')
+    ->desc('Get user preferences')
     ->groups(['api', 'users'])
     ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'getPrefs')
@@ -178,31 +470,28 @@ App::get('/v1/users/:userId/prefs')
     ->param('userId', '', new UID(), 'User ID.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
-    ->action(function (string $userId, Response $response, Database $dbForProject, Stats $usage) {
+    ->action(function (string $userId, Response $response, Database $dbForProject) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
-        $prefs = $user->getAttribute('prefs', new \stdClass());
+        $prefs = $user->getAttribute('prefs', []);
 
-        $usage
-            ->setParam('users.read', 1)
-        ;
         $response->dynamic(new Document($prefs), Response::MODEL_PREFERENCES);
     });
 
 App::get('/v1/users/:userId/sessions')
-    ->desc('Get User Sessions')
+    ->desc('List user sessions')
     ->groups(['api', 'users'])
     ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
-    ->label('sdk.method', 'getSessions')
-    ->label('sdk.description', '/docs/references/users/get-user-sessions.md')
+    ->label('sdk.method', 'listSessions')
+    ->label('sdk.description', '/docs/references/users/list-user-sessions.md')
     ->label('sdk.response.code', Response::STATUS_CODE_OK)
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_SESSION_LIST)
@@ -210,13 +499,12 @@ App::get('/v1/users/:userId/sessions')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('locale')
-    ->inject('usage')
-    ->action(function (string $userId, Response $response, Database $dbForProject, Locale $locale, Stats $usage) {
+    ->action(function (string $userId, Response $response, Database $dbForProject, Locale $locale) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $sessions = $user->getAttribute('sessions', []);
@@ -231,9 +519,6 @@ App::get('/v1/users/:userId/sessions')
             $sessions[$key] = $session;
         }
 
-        $usage
-            ->setParam('users.read', 1)
-        ;
         $response->dynamic(new Document([
             'sessions' => $sessions,
             'total' => count($sessions),
@@ -241,13 +526,14 @@ App::get('/v1/users/:userId/sessions')
     });
 
 App::get('/v1/users/:userId/memberships')
-    ->desc('Get User Memberships')
+    ->desc('List user memberships')
     ->groups(['api', 'users'])
     ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
-    ->label('sdk.method', 'getMemberships')
-    ->label('sdk.description', '/docs/references/users/get-user-memberships.md')
+    ->label('sdk.method', 'listMemberships')
+    ->label('sdk.description', '/docs/references/users/list-user-memberships.md')
     ->label('sdk.response.code', Response::STATUS_CODE_OK)
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_MEMBERSHIP_LIST)
@@ -259,7 +545,7 @@ App::get('/v1/users/:userId/memberships')
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $memberships = array_map(function ($membership) use ($dbForProject, $user) {
@@ -280,35 +566,39 @@ App::get('/v1/users/:userId/memberships')
     });
 
 App::get('/v1/users/:userId/logs')
-    ->desc('Get User Logs')
+    ->desc('List user logs')
     ->groups(['api', 'users'])
     ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
-    ->label('sdk.method', 'getLogs')
-    ->label('sdk.description', '/docs/references/users/get-user-logs.md')
+    ->label('sdk.method', 'listLogs')
+    ->label('sdk.description', '/docs/references/users/list-user-logs.md')
     ->label('sdk.response.code', Response::STATUS_CODE_OK)
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_LOG_LIST)
     ->param('userId', '', new UID(), 'User ID.')
-    ->param('limit', 25, new Range(0, 100), 'Maximum number of logs to return in response. By default will return maximum 25 results. Maximum of 100 results allowed per request.', true)
-    ->param('offset', 0, new Range(0, APP_LIMIT_COUNT), 'Offset value. The default value is 0. Use this value to manage pagination. [learn more about pagination](https://appwrite.io/docs/pagination)', true)
+    ->param('queries', [], new Queries([new Limit(), new Offset()]), 'Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Only supported methods are limit and offset', true)
     ->inject('response')
     ->inject('dbForProject')
     ->inject('locale')
     ->inject('geodb')
-    ->inject('usage')
-    ->action(function (string $userId, int $limit, int $offset, Response $response, Database $dbForProject, Locale $locale, Reader $geodb, Stats $usage) {
+    ->action(function (string $userId, array $queries, Response $response, Database $dbForProject, Locale $locale, Reader $geodb) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
+
+        $queries = Query::parseQueries($queries);
+        $grouped = Query::groupByType($queries);
+        $limit = $grouped['limit'] ?? APP_LIMIT_COUNT;
+        $offset = $grouped['offset'] ?? 0;
 
         $audit = new Audit($dbForProject);
 
-        $logs = $audit->getLogsByUser($user->getId(), $limit, $offset);
+        $logs = $audit->getLogsByUser($user->getInternalId(), $limit, $offset);
 
         $output = [];
 
@@ -351,21 +641,70 @@ App::get('/v1/users/:userId/logs')
             }
         }
 
-        $usage
-            ->setParam('users.read', 1)
-        ;
-
         $response->dynamic(new Document([
             'total' => $audit->countLogsByUser($user->getId()),
             'logs' => $output,
         ]), Response::MODEL_LOG_LIST);
     });
 
+App::get('/v1/users/identities')
+    ->desc('List Identities')
+    ->groups(['api', 'users'])
+    ->label('scope', 'users.read')
+    ->label('usage.metric', 'users.{scope}.requests.read')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'listIdentities')
+    ->label('sdk.description', '/docs/references/users/list-identities.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_OK)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_IDENTITY_LIST)
+    ->param('queries', [], new Identities(), 'Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of ' . APP_LIMIT_ARRAY_PARAMS_SIZE . ' queries are allowed, each ' . APP_LIMIT_ARRAY_ELEMENT_SIZE . ' characters long. You may filter on the following attributes: ' . implode(', ', Identities::ALLOWED_ATTRIBUTES), true)
+    ->param('search', '', new Text(256), 'Search term to filter your list results. Max length: 256 chars.', true)
+    ->inject('response')
+    ->inject('dbForProject')
+    ->action(function (array $queries, string $search, Response $response, Database $dbForProject) {
+
+        $queries = Query::parseQueries($queries);
+
+        if (!empty($search)) {
+            $queries[] = Query::search('search', $search);
+        }
+
+        // Get cursor document if there was a cursor query
+        $cursor = \array_filter($queries, function ($query) {
+            return \in_array($query->getMethod(), [Query::TYPE_CURSORAFTER, Query::TYPE_CURSORBEFORE]);
+        });
+        $cursor = reset($cursor);
+        if ($cursor) {
+            /** @var Query $cursor */
+            $identityId = $cursor->getValue();
+            $cursorDocument = $dbForProject->getDocument('identities', $identityId);
+
+            if ($cursorDocument->isEmpty()) {
+                throw new Exception(Exception::GENERAL_CURSOR_NOT_FOUND, "User '{$identityId}' for the 'cursor' value not found.");
+            }
+
+            $cursor->setValue($cursorDocument);
+        }
+
+        $filterQueries = Query::groupByType($queries)['filters'];
+
+        $response->dynamic(new Document([
+            'identities' => $dbForProject->find('identities', $queries),
+            'total' => $dbForProject->count('identities', $filterQueries, APP_LIMIT_COUNT),
+        ]), Response::MODEL_IDENTITY_LIST);
+    });
+
 App::patch('/v1/users/:userId/status')
-    ->desc('Update User Status')
+    ->desc('Update user status')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.status')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('audits.userId', '{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updateStatus')
@@ -377,73 +716,69 @@ App::patch('/v1/users/:userId/status')
     ->param('status', null, new Boolean(true), 'User Status. To activate the user pass `true` and to block the user pass `false`.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
     ->inject('events')
-    ->action(function (string $userId, bool $status, Response $response, Database $dbForProject, Stats $usage, Event $events) {
+    ->action(function (string $userId, bool $status, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $user = $dbForProject->updateDocument('users', $user->getId(), $user->setAttribute('status', (bool) $status));
 
-        $usage
-            ->setParam('users.update', 1)
-        ;
-
         $events
-            ->setParam('userId', $user->getId())
-        ;
+            ->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
-App::patch('/v1/users/:userId/verification')
-    ->desc('Update Email Verification')
+App::put('/v1/users/:userId/labels')
+    ->desc('Update user labels')
     ->groups(['api', 'users'])
-    ->label('event', 'users.[userId].update.verification')
+    ->label('event', 'users.[userId].update.labels')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
-    ->label('sdk.method', 'updateEmailVerification')
-    ->label('sdk.description', '/docs/references/users/update-user-email-verification.md')
+    ->label('sdk.method', 'updateLabels')
+    ->label('sdk.description', '/docs/references/users/update-user-labels.md')
     ->label('sdk.response.code', Response::STATUS_CODE_OK)
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_USER)
     ->param('userId', '', new UID(), 'User ID.')
-    ->param('emailVerification', false, new Boolean(), 'User email verification status.')
+    ->param('labels', [], new ArrayList(new Text(36, allowList: [...Text::NUMBERS, ...Text::ALPHABET_UPPER, ...Text::ALPHABET_LOWER]), APP_LIMIT_ARRAY_PARAMS_SIZE), 'Array of user labels. Replaces the previous labels. Maximum of ' . APP_LIMIT_ARRAY_PARAMS_SIZE . ' labels are allowed, each up to 36 alphanumeric characters long.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
     ->inject('events')
-    ->action(function (string $userId, bool $emailVerification, Response $response, Database $dbForProject, Stats $usage, Event $events) {
+    ->action(function (string $userId, array $labels, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
-        $user = $dbForProject->updateDocument('users', $user->getId(), $user->setAttribute('emailVerification', $emailVerification));
+        $user->setAttribute('labels', (array) \array_values(\array_unique($labels)));
 
-        $usage
-            ->setParam('users.update', 1)
-        ;
+        $user = $dbForProject->updateDocument('users', $user->getId(), $user);
 
         $events
-            ->setParam('userId', $user->getId())
-        ;
+            ->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::patch('/v1/users/:userId/verification/phone')
-    ->desc('Update Phone Verification')
+    ->desc('Update phone verification')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.verification')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'verification.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updatePhoneVerification')
@@ -455,34 +790,32 @@ App::patch('/v1/users/:userId/verification/phone')
     ->param('phoneVerification', false, new Boolean(), 'User phone verification status.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
     ->inject('events')
-    ->action(function (string $userId, bool $phoneVerification, Response $response, Database $dbForProject, Stats $usage, Event $events) {
+    ->action(function (string $userId, bool $phoneVerification, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $user = $dbForProject->updateDocument('users', $user->getId(), $user->setAttribute('phoneVerification', $phoneVerification));
 
-        $usage
-            ->setParam('users.update', 1)
-        ;
-
         $events
-            ->setParam('userId', $user->getId())
-        ;
+            ->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::patch('/v1/users/:userId/name')
-    ->desc('Update Name')
+    ->desc('Update name')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.name')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('audits.userId', '{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updateName')
@@ -494,39 +827,33 @@ App::patch('/v1/users/:userId/name')
     ->param('name', '', new Text(128), 'User name. Max length: 128 chars.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('audits')
     ->inject('events')
-    ->action(function (string $userId, string $name, Response $response, Database $dbForProject, EventAudit $audits, Event $events) {
+    ->action(function (string $userId, string $name, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
-        $user
-            ->setAttribute('name', $name)
-            ->setAttribute('search', \implode(' ', [$user->getId(), $user->getAttribute('email'), $name]));
-        ;
+        $user->setAttribute('name', $name);
 
         $user = $dbForProject->updateDocument('users', $user->getId(), $user);
 
-        $audits
-            ->setResource('user/' . $user->getId())
-        ;
-
-        $events
-            ->setParam('userId', $user->getId())
-        ;
+        $events->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::patch('/v1/users/:userId/password')
-    ->desc('Update Password')
+    ->desc('Update password')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.password')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('audits.userId', '{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updatePassword')
@@ -535,41 +862,63 @@ App::patch('/v1/users/:userId/password')
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_USER)
     ->param('userId', '', new UID(), 'User ID.')
-    ->param('password', '', new Password(), 'New user password. Must be at least 8 chars.')
+    ->param('password', '', fn ($project, $passwordsDictionary) => new PasswordDictionary($passwordsDictionary, $project->getAttribute('auths', [])['passwordDictionary'] ?? false), 'New user password. Must be at least 8 chars.', false, ['project', 'passwordsDictionary'])
     ->inject('response')
+    ->inject('project')
     ->inject('dbForProject')
-    ->inject('audits')
     ->inject('events')
-    ->action(function (string $userId, string $password, Response $response, Database $dbForProject, EventAudit $audits, Event $events) {
+    ->action(function (string $userId, string $password, Response $response, Document $project, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
+        }
+
+        if ($project->getAttribute('auths', [])['personalDataCheck'] ?? false) {
+            $personalDataValidator = new PersonalData($userId, $user->getAttribute('email'), $user->getAttribute('name'), $user->getAttribute('phone'));
+            if (!$personalDataValidator->isValid($password)) {
+                throw new Exception(Exception::USER_PASSWORD_PERSONAL_DATA);
+            }
+        }
+
+        $newPassword = Auth::passwordHash($password, Auth::DEFAULT_ALGO, Auth::DEFAULT_ALGO_OPTIONS);
+
+        $historyLimit = $project->getAttribute('auths', [])['passwordHistory'] ?? 0;
+        $history = $user->getAttribute('passwordHistory', []);
+        if ($historyLimit > 0) {
+            $validator = new PasswordHistory($history, $user->getAttribute('hash'), $user->getAttribute('hashOptions'));
+            if (!$validator->isValid($password)) {
+                throw new Exception(Exception::USER_PASSWORD_RECENTLY_USED);
+            }
+
+            $history[] = $newPassword;
+            $history = array_slice($history, (count($history) - $historyLimit), $historyLimit);
         }
 
         $user
-            ->setAttribute('password', Auth::passwordHash($password))
-            ->setAttribute('passwordUpdate', \time());
+            ->setAttribute('password', $newPassword)
+            ->setAttribute('passwordHistory', $history)
+            ->setAttribute('passwordUpdate', DateTime::now())
+            ->setAttribute('hash', Auth::DEFAULT_ALGO)
+            ->setAttribute('hashOptions', Auth::DEFAULT_ALGO_OPTIONS);
 
         $user = $dbForProject->updateDocument('users', $user->getId(), $user);
 
-        $audits
-            ->setResource('user/' . $user->getId())
-        ;
-
-        $events
-            ->setParam('userId', $user->getId())
-        ;
+        $events->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::patch('/v1/users/:userId/email')
-    ->desc('Update Email')
+    ->desc('Update email')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.email')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('audits.userId', '{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updateEmail')
@@ -581,47 +930,51 @@ App::patch('/v1/users/:userId/email')
     ->param('email', '', new Email(), 'User email.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('audits')
     ->inject('events')
-    ->action(function (string $userId, string $email, Response $response, Database $dbForProject, EventAudit $audits, Event $events) {
+    ->action(function (string $userId, string $email, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $email = \strtolower($email);
 
+        // Makes sure this email is not already used in another identity
+        $identityWithMatchingEmail = $dbForProject->findOne('identities', [
+            Query::equal('providerEmail', [$email]),
+            Query::notEqual('userId', $user->getId()),
+        ]);
+        if ($identityWithMatchingEmail !== false && !$identityWithMatchingEmail->isEmpty()) {
+            throw new Exception(Exception::USER_EMAIL_ALREADY_EXISTS);
+        }
+
         $user
             ->setAttribute('email', $email)
             ->setAttribute('emailVerification', false)
-            ->setAttribute('search', \implode(' ', [$user->getId(), $email, $user->getAttribute('name')]))
         ;
+
 
         try {
             $user = $dbForProject->updateDocument('users', $user->getId(), $user);
         } catch (Duplicate $th) {
-            throw new Exception('Email already exists', 409, Exception::USER_EMAIL_ALREADY_EXISTS);
+            throw new Exception(Exception::USER_EMAIL_ALREADY_EXISTS);
         }
 
-
-        $audits
-            ->setResource('user/' . $user->getId())
-        ;
-
-        $events
-            ->setParam('userId', $user->getId())
-        ;
+        $events->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::patch('/v1/users/:userId/phone')
-    ->desc('Update Phone')
+    ->desc('Update phone')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.phone')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.update')
+    ->label('audits.resource', 'user/{response.$id}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updatePhone')
@@ -633,14 +986,13 @@ App::patch('/v1/users/:userId/phone')
     ->param('number', '', new Phone(), 'User phone number.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('audits')
     ->inject('events')
-    ->action(function (string $userId, string $number, Response $response, Database $dbForProject, EventAudit $audits, Event $events) {
+    ->action(function (string $userId, string $number, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $user
@@ -651,26 +1003,56 @@ App::patch('/v1/users/:userId/phone')
         try {
             $user = $dbForProject->updateDocument('users', $user->getId(), $user);
         } catch (Duplicate $th) {
-            throw new Exception('Email already exists', 409, Exception::USER_EMAIL_ALREADY_EXISTS);
+            throw new Exception(Exception::USER_PHONE_ALREADY_EXISTS);
         }
 
+        $events->setParam('userId', $user->getId());
 
-        $audits
-            ->setResource('user/' . $user->getId())
-        ;
+        $response->dynamic($user, Response::MODEL_USER);
+    });
 
-        $events
-            ->setParam('userId', $user->getId())
-        ;
+App::patch('/v1/users/:userId/verification')
+    ->desc('Update email verification')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].update.verification')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'verification.update')
+    ->label('audits.resource', 'user/{request.userId}')
+    ->label('audits.userId', '{request.userId}')
+    ->label('usage.metric', 'users.{scope}.requests.update')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'updateEmailVerification')
+    ->label('sdk.description', '/docs/references/users/update-user-email-verification.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_OK)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_USER)
+    ->param('userId', '', new UID(), 'User ID.')
+    ->param('emailVerification', false, new Boolean(), 'User email verification status.')
+    ->inject('response')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->action(function (string $userId, bool $emailVerification, Response $response, Database $dbForProject, Event $events) {
+
+        $user = $dbForProject->getDocument('users', $userId);
+
+        if ($user->isEmpty()) {
+            throw new Exception(Exception::USER_NOT_FOUND);
+        }
+
+        $user = $dbForProject->updateDocument('users', $user->getId(), $user->setAttribute('emailVerification', $emailVerification));
+
+        $events->setParam('userId', $user->getId());
 
         $response->dynamic($user, Response::MODEL_USER);
     });
 
 App::patch('/v1/users/:userId/prefs')
-    ->desc('Update User Preferences')
+    ->desc('Update user preferences')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].update.prefs')
     ->label('scope', 'users.write')
+    ->label('usage.metric', 'users.{scope}.requests.update')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'updatePrefs')
@@ -682,34 +1064,31 @@ App::patch('/v1/users/:userId/prefs')
     ->param('prefs', '', new Assoc(), 'Prefs key-value JSON object.')
     ->inject('response')
     ->inject('dbForProject')
-    ->inject('usage')
     ->inject('events')
-    ->action(function (string $userId, array $prefs, Response $response, Database $dbForProject, Stats $usage, Event $events) {
+    ->action(function (string $userId, array $prefs, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $user = $dbForProject->updateDocument('users', $user->getId(), $user->setAttribute('prefs', $prefs));
 
-        $usage
-            ->setParam('users.update', 1)
-        ;
-
         $events
-            ->setParam('userId', $user->getId())
-        ;
+            ->setParam('userId', $user->getId());
 
         $response->dynamic(new Document($prefs), Response::MODEL_PREFERENCES);
     });
 
 App::delete('/v1/users/:userId/sessions/:sessionId')
-    ->desc('Delete User Session')
+    ->desc('Delete user session')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].sessions.[sessionId].delete')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'session.delete')
+    ->label('audits.resource', 'user/{request.userId}')
+    ->label('usage.metric', 'sessions.{scope}.requests.delete')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'deleteSession')
@@ -717,47 +1096,43 @@ App::delete('/v1/users/:userId/sessions/:sessionId')
     ->label('sdk.response.code', Response::STATUS_CODE_NOCONTENT)
     ->label('sdk.response.model', Response::MODEL_NONE)
     ->param('userId', '', new UID(), 'User ID.')
-    ->param('sessionId', null, new UID(), 'Session ID.')
+    ->param('sessionId', '', new UID(), 'Session ID.')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('events')
-    ->inject('usage')
-    ->action(function (string $userId, string $sessionId, Response $response, Database $dbForProject, Event $events, Stats $usage) {
+    ->action(function (string $userId, string $sessionId, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $session = $dbForProject->getDocument('sessions', $sessionId);
 
         if ($session->isEmpty()) {
-            throw new Exception('Session not found', 404, Exception::USER_SESSION_NOT_FOUND);
+            throw new Exception(Exception::USER_SESSION_NOT_FOUND);
         }
 
         $dbForProject->deleteDocument('sessions', $session->getId());
         $dbForProject->deleteCachedDocument('users', $user->getId());
 
-
-        $usage
-            ->setParam('users.update', 1)
-            ->setParam('users.sessions.delete', 1)
-        ;
-
         $events
             ->setParam('userId', $user->getId())
             ->setParam('sessionId', $sessionId)
-        ;
+            ->setPayload($response->output($session, Response::MODEL_SESSION));
 
         $response->noContent();
     });
 
 App::delete('/v1/users/:userId/sessions')
-    ->desc('Delete User Sessions')
+    ->desc('Delete user sessions')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].sessions.[sessionId].delete')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'session.delete')
+    ->label('audits.resource', 'user/{user.$id}')
+    ->label('usage.metric', 'sessions.{scope}.requests.delete')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'deleteSessions')
@@ -768,18 +1143,18 @@ App::delete('/v1/users/:userId/sessions')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('events')
-    ->inject('usage')
-    ->action(function (string $userId, Response $response, Database $dbForProject, Event $events, Stats $usage) {
+    ->action(function (string $userId, Response $response, Database $dbForProject, Event $events) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         $sessions = $user->getAttribute('sessions', []);
 
-        foreach ($sessions as $key => $session) { /** @var Document $session */
+        foreach ($sessions as $key => $session) {
+            /** @var Document $session */
             $dbForProject->deleteDocument('sessions', $session->getId());
             //TODO: fix this
         }
@@ -788,22 +1163,19 @@ App::delete('/v1/users/:userId/sessions')
 
         $events
             ->setParam('userId', $user->getId())
-            ->setPayload($response->output($user, Response::MODEL_USER))
-        ;
-
-        $usage
-            ->setParam('users.update', 1)
-            ->setParam('users.sessions.delete', 1)
-        ;
+            ->setPayload($response->output($user, Response::MODEL_USER));
 
         $response->noContent();
     });
 
 App::delete('/v1/users/:userId')
-    ->desc('Delete User')
+    ->desc('Delete user')
     ->groups(['api', 'users'])
     ->label('event', 'users.[userId].delete')
     ->label('scope', 'users.write')
+    ->label('audits.event', 'user.delete')
+    ->label('audits.resource', 'user/{request.userId}')
+    ->label('usage.metric', 'users.{scope}.requests.delete')
     ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
     ->label('sdk.namespace', 'users')
     ->label('sdk.method', 'delete')
@@ -815,13 +1187,12 @@ App::delete('/v1/users/:userId')
     ->inject('dbForProject')
     ->inject('events')
     ->inject('deletes')
-    ->inject('usage')
-    ->action(function (string $userId, Response $response, Database $dbForProject, Event $events, Delete $deletes, Stats $usage) {
+    ->action(function (string $userId, Response $response, Database $dbForProject, Event $events, Delete $deletes) {
 
         $user = $dbForProject->getDocument('users', $userId);
 
         if ($user->isEmpty()) {
-            throw new Exception('User not found', 404, Exception::USER_NOT_FOUND);
+            throw new Exception(Exception::USER_NOT_FOUND);
         }
 
         // clone user object to send to workers
@@ -831,24 +1202,50 @@ App::delete('/v1/users/:userId')
 
         $deletes
             ->setType(DELETE_TYPE_DOCUMENT)
-            ->setDocument($clone)
-        ;
+            ->setDocument($clone);
 
         $events
             ->setParam('userId', $user->getId())
-            ->setPayload($response->output($clone, Response::MODEL_USER))
-        ;
-
-        $usage
-            ->setParam('users.delete', 1)
-        ;
+            ->setPayload($response->output($clone, Response::MODEL_USER));
 
         $response->noContent();
     });
 
+App::delete('/v1/users/identities/:identityId')
+    ->desc('Delete Identity')
+    ->groups(['api', 'users'])
+    ->label('event', 'users.[userId].identities.[identityId].delete')
+    ->label('scope', 'users.write')
+    ->label('audits.event', 'identity.delete')
+    ->label('audits.resource', 'identity/{request.$identityId}')
+    ->label('usage.metric', 'users.{scope}.requests.delete')
+    ->label('sdk.auth', [APP_AUTH_TYPE_KEY])
+    ->label('sdk.namespace', 'users')
+    ->label('sdk.method', 'deleteIdentity')
+    ->label('sdk.description', '/docs/references/users/delete-identity.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_NOCONTENT)
+    ->label('sdk.response.model', Response::MODEL_NONE)
+    ->param('identityId', '', new UID(), 'Identity ID.')
+    ->inject('response')
+    ->inject('dbForProject')
+    ->inject('events')
+    ->inject('deletes')
+    ->action(function (string $identityId, Response $response, Database $dbForProject, Event $events, Delete $deletes) {
+
+        $identity = $dbForProject->getDocument('identities', $identityId);
+
+        if ($identity->isEmpty()) {
+            throw new Exception(Exception::USER_IDENTITY_NOT_FOUND);
+        }
+
+        $dbForProject->deleteDocument('identities', $identityId);
+
+        return $response->noContent();
+    });
+
 App::get('/v1/users/usage')
     ->desc('Get usage stats for the users API')
-    ->groups(['api', 'users'])
+    ->groups(['api', 'users', 'usage'])
     ->label('scope', 'users.read')
     ->label('sdk.auth', [APP_AUTH_TYPE_ADMIN])
     ->label('sdk.namespace', 'users')
@@ -857,7 +1254,7 @@ App::get('/v1/users/usage')
     ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
     ->label('sdk.response.model', Response::MODEL_USAGE_USERS)
     ->param('range', '30d', new WhiteList(['24h', '7d', '30d', '90d'], true), 'Date range.', true)
-    ->param('provider', '', new WhiteList(\array_merge(['email', 'anonymous'], \array_map(fn($value) => "oauth-" . $value, \array_keys(Config::getParam('providers', [])))), true), 'Provider Name.', true)
+    ->param('provider', '', new WhiteList(\array_merge(['email', 'anonymous'], \array_map(fn ($value) => "oauth-" . $value, \array_keys(Config::getParam('providers', [])))), true), 'Provider Name.', true)
     ->inject('response')
     ->inject('dbForProject')
     ->inject('register')
@@ -867,8 +1264,8 @@ App::get('/v1/users/usage')
         if (App::getEnv('_APP_USAGE_STATS', 'enabled') == 'enabled') {
             $periods = [
                 '24h' => [
-                    'period' => '30m',
-                    'limit' => 48,
+                    'period' => '1h',
+                    'limit' => 24,
                 ],
                 '7d' => [
                     'period' => '1d',
@@ -885,14 +1282,14 @@ App::get('/v1/users/usage')
             ];
 
             $metrics = [
-                "users.count",
-                "users.create",
-                "users.read",
-                "users.update",
-                "users.delete",
-                "users.sessions.create",
-                "users.sessions.$provider.create",
-                "users.sessions.delete"
+                'users.$all.count.total',
+                'users.$all.requests.create',
+                'users.$all.requests.read',
+                'users.$all.requests.update',
+                'users.$all.requests.delete',
+                'sessions.$all.requests.create',
+                'sessions.$all.requests.delete',
+                "sessions.$provider.requests.create",
             ];
 
             $stats = [];
@@ -903,9 +1300,11 @@ App::get('/v1/users/usage')
                     $period = $periods[$range]['period'];
 
                     $requestDocs = $dbForProject->find('stats', [
-                        new Query('period', Query::TYPE_EQUAL, [$period]),
-                        new Query('metric', Query::TYPE_EQUAL, [$metric]),
-                    ], $limit, 0, ['time'], [Database::ORDER_DESC]);
+                        Query::equal('period', [$period]),
+                        Query::equal('metric', [$metric]),
+                        Query::limit($limit),
+                        Query::orderDesc('time'),
+                    ]);
 
                     $stats[$metric] = [];
                     foreach ($requestDocs as $requestDoc) {
@@ -920,12 +1319,12 @@ App::get('/v1/users/usage')
                     while ($backfill > 0) {
                         $last = $limit - $backfill - 1; // array index of last added metric
                         $diff = match ($period) { // convert period to seconds for unix timestamp math
-                            '30m' => 1800,
+                            '1h' => 3600,
                             '1d' => 86400,
                         };
                         $stats[$metric][] = [
                             'value' => 0,
-                            'date' => ($stats[$metric][$last]['date'] ?? \time()) - $diff, // time of last metric minus period
+                            'date' => DateTime::formatTz(DateTime::addSeconds(new \DateTime($stats[$metric][$last]['date'] ?? null), -1 * $diff)),
                         ];
                         $backfill--;
                     }
@@ -935,14 +1334,14 @@ App::get('/v1/users/usage')
 
             $usage = new Document([
                 'range' => $range,
-                'usersCount' => $stats["users.count"],
-                'usersCreate' => $stats["users.create"],
-                'usersRead' => $stats["users.read"],
-                'usersUpdate' => $stats["users.update"],
-                'usersDelete' => $stats["users.delete"],
-                'sessionsCreate' => $stats["users.sessions.create"],
-                'sessionsProviderCreate' => $stats["users.sessions.$provider.create"],
-                'sessionsDelete' => $stats["users.sessions.delete"]
+                'usersCount' => $stats['users.$all.count.total'] ?? [],
+                'usersCreate' => $stats['users.$all.requests.create'] ?? [],
+                'usersRead' => $stats['users.$all.requests.read'] ?? [],
+                'usersUpdate' => $stats['users.$all.requests.update'] ?? [],
+                'usersDelete' => $stats['users.$all.requests.delete'] ?? [],
+                'sessionsCreate' => $stats['sessions.$all.requests.create'] ?? [],
+                'sessionsProviderCreate' => $stats["sessions.$provider.requests.create"] ?? [],
+                'sessionsDelete' => $stats['sessions.$all.requests.delete' ?? []]
             ]);
         }
 

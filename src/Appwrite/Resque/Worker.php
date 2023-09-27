@@ -2,22 +2,26 @@
 
 namespace Appwrite\Resque;
 
+use Appwrite\Event\Usage;
+use Exception;
 use Utopia\App;
 use Utopia\Cache\Cache;
-use Utopia\Cache\Adapter\Redis as RedisCache;
+use Utopia\Config\Config;
+use Utopia\Cache\Adapter\Sharding;
 use Utopia\CLI\Console;
 use Utopia\Database\Database;
-use Utopia\Database\Adapter\MariaDB;
+use Utopia\Database\Document;
+use Utopia\Pools\Group;
 use Utopia\Storage\Device;
-use Utopia\Storage\Storage;
-use Utopia\Storage\Device\Local;
+use Utopia\Storage\Device\Backblaze;
 use Utopia\Storage\Device\DOSpaces;
 use Utopia\Storage\Device\Linode;
-use Utopia\Storage\Device\Wasabi;
-use Utopia\Storage\Device\Backblaze;
+use Utopia\Storage\Device\Local;
 use Utopia\Storage\Device\S3;
-use Exception;
 use Utopia\Database\Validator\Authorization;
+use Utopia\DSN\DSN;
+use Utopia\Storage\Device\Wasabi;
+use Utopia\Storage\Storage;
 
 abstract class Worker
 {
@@ -53,7 +57,7 @@ abstract class Worker
      * @return void
      * @throws \Exception|\Throwable
      */
-    public function init()
+    public function init(): void
     {
         throw new Exception("Please implement init method in worker");
     }
@@ -65,7 +69,7 @@ abstract class Worker
      * @return void
      * @throws \Exception|\Throwable
      */
-    public function run()
+    public function run(): void
     {
         throw new Exception("Please implement run method in worker");
     }
@@ -77,7 +81,7 @@ abstract class Worker
      * @return void
      * @throws \Exception|\Throwable
      */
-    public function shutdown()
+    public function shutdown(): void
     {
         throw new Exception("Please implement shutdown method in worker");
     }
@@ -136,7 +140,12 @@ abstract class Worker
      */
     public function tearDown(): void
     {
+        global $register;
+
         try {
+            $pools = $register->get('pools'); /** @var Group $pools */
+            $pools->reclaim();
+
             $this->shutdown();
         } catch (\Throwable $error) {
             foreach (self::$errorCallbacks as $errorCallback) {
@@ -151,99 +160,129 @@ abstract class Worker
     /**
      * Register callback. Will be executed when error occurs.
      * @param callable $callback
-     * @param Throwable $error
-     * @return self
+     * @return void
      */
     public static function error(callable $callback): void
     {
-        \array_push(self::$errorCallbacks, $callback);
+        self::$errorCallbacks[] = $callback;
     }
+
     /**
      * Get internal project database
-     * @param string $projectId
+     * @param Document $project
      * @return Database
+     * @throws Exception
      */
-    protected function getProjectDB(string $projectId): Database
-    {
-        $consoleDB = $this->getConsoleDB();
+    protected static $databases = []; // TODO: @Meldiron This should probably be responsibility of utopia-php/pools
 
-        if ($projectId === 'console') {
-            return $consoleDB;
-        }
-
-        /** @var Document $project */
-        $project = Authorization::skip(fn() => $consoleDB->getDocument('projects', $projectId));
-
-        return $this->getDB(self::DATABASE_PROJECT, $projectId, $project->getInternalId());
-    }
-
-    /**
-     * Get console database
-     * @return Database
-     */
-    protected function getConsoleDB(): Database
-    {
-        return $this->getDB(self::DATABASE_CONSOLE);
-    }
-
-    /**
-     * Get console database
-     * @param string $type One of (internal, external, console)
-     * @param string $projectId of internal or external DB
-     * @return Database
-     */
-    private function getDB(string $type, string $projectId = '', string $projectInternalId = ''): Database
+    protected function getProjectDB(Document $project): Database
     {
         global $register;
 
-        $namespace = '';
-        $sleep = DATABASE_RECONNECT_SLEEP; // overwritten when necessary
+        $pools = $register->get('pools'); /** @var Group $pools */
 
-        switch ($type) {
-            case self::DATABASE_PROJECT:
-                if (!$projectId) {
-                    throw new \Exception('ProjectID not provided - cannot get database');
-                }
-                $namespace = "_{$projectInternalId}";
-                break;
-            case self::DATABASE_CONSOLE:
-                $namespace = "_console";
-                $sleep = 5; // ConsoleDB needs extra sleep time to ensure tables are created
-                break;
-            default:
-                throw new \Exception('Unknown database type: ' . $type);
-                break;
+        if ($project->isEmpty() || $project->getId() === 'console') {
+            return $this->getConsoleDB();
         }
 
-        $attempts = 0;
+        $databaseName = $project->getAttribute('database');
 
-        do {
-            try {
-                $attempts++;
-                $cache = new Cache(new RedisCache($register->get('cache')));
-                $database = new Database(new MariaDB($register->get('db')), $cache);
-                $database->setDefaultDatabase(App::getEnv('_APP_DB_SCHEMA', 'appwrite'));
-                $database->setNamespace($namespace); // Main DB
+        if (isset(self::$databases[$databaseName])) {
+            $database = self::$databases[$databaseName];
+            $database->setNamespace('_' . $project->getInternalId());
+            return $database;
+        }
 
-                if (!empty($projectId) && !$database->getDocument('projects', $projectId)->isEmpty()) {
-                    throw new \Exception("Project does not exist: {$projectId}");
-                }
+        $dbAdapter = $pools
+            ->get($project->getAttribute('database'))
+            ->pop()
+            ->getResource()
+        ;
 
-                if ($type === self::DATABASE_CONSOLE && !$database->exists($database->getDefaultDatabase(), '_metadata')) {
-                    throw new \Exception('Console project not ready');
-                }
+        $database = new Database($dbAdapter, $this->getCache());
 
-                break; // leave loop if successful
-            } catch (\Exception $e) {
-                Console::warning("Database not ready. Retrying connection ({$attempts})...");
-                if ($attempts >= DATABASE_RECONNECT_MAX_ATTEMPTS) {
-                    throw new \Exception('Failed to connect to database: ' . $e->getMessage());
-                }
-                sleep($sleep);
-            }
-        } while ($attempts < DATABASE_RECONNECT_MAX_ATTEMPTS);
+        self::$databases[$databaseName] = $database;
+
+        $database->setNamespace('_' . $project->getInternalId());
 
         return $database;
+    }
+
+    /**
+     * Get console database
+     * @return Database
+     * @throws Exception
+     */
+    protected function getConsoleDB(): Database
+    {
+        global $register;
+
+        $pools = $register->get('pools'); /** @var Group $pools */
+
+        $databaseName = 'console';
+
+        if (isset(self::$databases[$databaseName])) {
+            $database = self::$databases[$databaseName];
+            $database->setNamespace('_console');
+            return $database;
+        }
+
+        $dbAdapter = $pools
+            ->get('console')
+            ->pop()
+            ->getResource()
+        ;
+
+        $database = new Database($dbAdapter, $this->getCache());
+
+        self::$databases[$databaseName] = $database;
+
+        $database->setNamespace('_console');
+
+        return $database;
+    }
+
+
+    /**
+     * Get Cache
+     * @return Cache
+     */
+    protected function getCache(): Cache
+    {
+        global $register;
+
+        $pools = $register->get('pools'); /** @var Group $pools */
+
+        $list = Config::getParam('pools-cache', []);
+        $adapters = [];
+
+        foreach ($list as $value) {
+            $adapters[] = $pools
+                ->get($value)
+                ->pop()
+                ->getResource()
+            ;
+        }
+
+        return new Cache(new Sharding($adapters));
+    }
+
+    /**
+     * Get usage queue
+     * @return Usage
+     * @throws Exception
+     */
+    protected function getUsageQueue(): Usage
+    {
+        global $register;
+
+        $pools = $register->get('pools'); /** @var Group $pools */
+        $queue = $pools
+            ->get('queue')
+            ->pop()
+            ->getResource();
+
+        return new Usage($queue);
     }
 
     /**
@@ -251,7 +290,7 @@ abstract class Worker
      * @param string $projectId of the project
      * @return Device
      */
-    protected function getFunctionsDevice($projectId): Device
+    protected function getFunctionsDevice(string $projectId): Device
     {
         return $this->getDevice(APP_STORAGE_FUNCTIONS . '/app-' . $projectId);
     }
@@ -261,20 +300,24 @@ abstract class Worker
      * @param string $projectId of the project
      * @return Device
      */
-    protected function getFilesDevice($projectId): Device
+    protected function getFilesDevice(string $projectId): Device
     {
         return $this->getDevice(APP_STORAGE_UPLOADS . '/app-' . $projectId);
     }
-
 
     /**
      * Get Builds Storage Device
      * @param string $projectId of the project
      * @return Device
      */
-    protected function getBuildsDevice($projectId): Device
+    protected function getBuildsDevice(string $projectId): Device
     {
         return $this->getDevice(APP_STORAGE_BUILDS . '/app-' . $projectId);
+    }
+
+    protected function getCacheDevice(string $projectId): Device
+    {
+        return $this->getDevice(APP_STORAGE_CACHE . '/app-' . $projectId);
     }
 
     /**
@@ -282,47 +325,85 @@ abstract class Worker
      * @param string $root path of the device
      * @return Device
      */
-    public function getDevice($root): Device
+    public function getDevice(string $root): Device
     {
-        switch (App::getEnv('_APP_STORAGE_DEVICE', Storage::DEVICE_LOCAL)) {
-            case Storage::DEVICE_LOCAL:
-            default:
-                return new Local($root);
-            case Storage::DEVICE_S3:
-                $s3AccessKey = App::getEnv('_APP_STORAGE_S3_ACCESS_KEY', '');
-                $s3SecretKey = App::getEnv('_APP_STORAGE_S3_SECRET', '');
-                $s3Region = App::getEnv('_APP_STORAGE_S3_REGION', '');
-                $s3Bucket = App::getEnv('_APP_STORAGE_S3_BUCKET', '');
-                $s3Acl = 'private';
-                return new S3($root, $s3AccessKey, $s3SecretKey, $s3Bucket, $s3Region, $s3Acl);
-            case Storage::DEVICE_DO_SPACES:
-                $doSpacesAccessKey = App::getEnv('_APP_STORAGE_DO_SPACES_ACCESS_KEY', '');
-                $doSpacesSecretKey = App::getEnv('_APP_STORAGE_DO_SPACES_SECRET', '');
-                $doSpacesRegion = App::getEnv('_APP_STORAGE_DO_SPACES_REGION', '');
-                $doSpacesBucket = App::getEnv('_APP_STORAGE_DO_SPACES_BUCKET', '');
-                $doSpacesAcl = 'private';
-                return new DOSpaces($root, $doSpacesAccessKey, $doSpacesSecretKey, $doSpacesBucket, $doSpacesRegion, $doSpacesAcl);
-            case Storage::DEVICE_BACKBLAZE:
-                $backblazeAccessKey = App::getEnv('_APP_STORAGE_BACKBLAZE_ACCESS_KEY', '');
-                $backblazeSecretKey = App::getEnv('_APP_STORAGE_BACKBLAZE_SECRET', '');
-                $backblazeRegion = App::getEnv('_APP_STORAGE_BACKBLAZE_REGION', '');
-                $backblazeBucket = App::getEnv('_APP_STORAGE_BACKBLAZE_BUCKET', '');
-                $backblazeAcl = 'private';
-                return new Backblaze($root, $backblazeAccessKey, $backblazeSecretKey, $backblazeBucket, $backblazeRegion, $backblazeAcl);
-            case Storage::DEVICE_LINODE:
-                $linodeAccessKey = App::getEnv('_APP_STORAGE_LINODE_ACCESS_KEY', '');
-                $linodeSecretKey = App::getEnv('_APP_STORAGE_LINODE_SECRET', '');
-                $linodeRegion = App::getEnv('_APP_STORAGE_LINODE_REGION', '');
-                $linodeBucket = App::getEnv('_APP_STORAGE_LINODE_BUCKET', '');
-                $linodeAcl = 'private';
-                return new Linode($root, $linodeAccessKey, $linodeSecretKey, $linodeBucket, $linodeRegion, $linodeAcl);
-            case Storage::DEVICE_WASABI:
-                $wasabiAccessKey = App::getEnv('_APP_STORAGE_WASABI_ACCESS_KEY', '');
-                $wasabiSecretKey = App::getEnv('_APP_STORAGE_WASABI_SECRET', '');
-                $wasabiRegion = App::getEnv('_APP_STORAGE_WASABI_REGION', '');
-                $wasabiBucket = App::getEnv('_APP_STORAGE_WASABI_BUCKET', '');
-                $wasabiAcl = 'private';
-                return new Wasabi($root, $wasabiAccessKey, $wasabiSecretKey, $wasabiBucket, $wasabiRegion, $wasabiAcl);
+        $connection = App::getEnv('_APP_CONNECTIONS_STORAGE', '');
+
+        if (!empty($connection)) {
+            $acl = 'private';
+            $device = Storage::DEVICE_LOCAL;
+            $accessKey = '';
+            $accessSecret = '';
+            $bucket = '';
+            $region = '';
+
+            try {
+                $dsn = new DSN($connection);
+                $device = $dsn->getScheme();
+                $accessKey = $dsn->getUser() ?? '';
+                $accessSecret = $dsn->getPassword() ?? '';
+                $bucket = $dsn->getPath() ?? '';
+                $region = $dsn->getParam('region');
+            } catch (\Exception $e) {
+                Console::warning($e->getMessage() . 'Invalid DSN. Defaulting to Local device.');
+            }
+
+            switch ($device) {
+                case Storage::DEVICE_S3:
+                    return new S3($root, $accessKey, $accessSecret, $bucket, $region, $acl);
+                case STORAGE::DEVICE_DO_SPACES:
+                    return new DOSpaces($root, $accessKey, $accessSecret, $bucket, $region, $acl);
+                case Storage::DEVICE_BACKBLAZE:
+                    return new Backblaze($root, $accessKey, $accessSecret, $bucket, $region, $acl);
+                case Storage::DEVICE_LINODE:
+                    return new Linode($root, $accessKey, $accessSecret, $bucket, $region, $acl);
+                case Storage::DEVICE_WASABI:
+                    return new Wasabi($root, $accessKey, $accessSecret, $bucket, $region, $acl);
+                case Storage::DEVICE_LOCAL:
+                default:
+                    return new Local($root);
+            }
+        } else {
+            switch (strtolower(App::getEnv('_APP_STORAGE_DEVICE', Storage::DEVICE_LOCAL) ?? '')) {
+                case Storage::DEVICE_LOCAL:
+                default:
+                    return new Local($root);
+                case Storage::DEVICE_S3:
+                    $s3AccessKey = App::getEnv('_APP_STORAGE_S3_ACCESS_KEY', '');
+                    $s3SecretKey = App::getEnv('_APP_STORAGE_S3_SECRET', '');
+                    $s3Region = App::getEnv('_APP_STORAGE_S3_REGION', '');
+                    $s3Bucket = App::getEnv('_APP_STORAGE_S3_BUCKET', '');
+                    $s3Acl = 'private';
+                    return new S3($root, $s3AccessKey, $s3SecretKey, $s3Bucket, $s3Region, $s3Acl);
+                case Storage::DEVICE_DO_SPACES:
+                    $doSpacesAccessKey = App::getEnv('_APP_STORAGE_DO_SPACES_ACCESS_KEY', '');
+                    $doSpacesSecretKey = App::getEnv('_APP_STORAGE_DO_SPACES_SECRET', '');
+                    $doSpacesRegion = App::getEnv('_APP_STORAGE_DO_SPACES_REGION', '');
+                    $doSpacesBucket = App::getEnv('_APP_STORAGE_DO_SPACES_BUCKET', '');
+                    $doSpacesAcl = 'private';
+                    return new DOSpaces($root, $doSpacesAccessKey, $doSpacesSecretKey, $doSpacesBucket, $doSpacesRegion, $doSpacesAcl);
+                case Storage::DEVICE_BACKBLAZE:
+                    $backblazeAccessKey = App::getEnv('_APP_STORAGE_BACKBLAZE_ACCESS_KEY', '');
+                    $backblazeSecretKey = App::getEnv('_APP_STORAGE_BACKBLAZE_SECRET', '');
+                    $backblazeRegion = App::getEnv('_APP_STORAGE_BACKBLAZE_REGION', '');
+                    $backblazeBucket = App::getEnv('_APP_STORAGE_BACKBLAZE_BUCKET', '');
+                    $backblazeAcl = 'private';
+                    return new Backblaze($root, $backblazeAccessKey, $backblazeSecretKey, $backblazeBucket, $backblazeRegion, $backblazeAcl);
+                case Storage::DEVICE_LINODE:
+                    $linodeAccessKey = App::getEnv('_APP_STORAGE_LINODE_ACCESS_KEY', '');
+                    $linodeSecretKey = App::getEnv('_APP_STORAGE_LINODE_SECRET', '');
+                    $linodeRegion = App::getEnv('_APP_STORAGE_LINODE_REGION', '');
+                    $linodeBucket = App::getEnv('_APP_STORAGE_LINODE_BUCKET', '');
+                    $linodeAcl = 'private';
+                    return new Linode($root, $linodeAccessKey, $linodeSecretKey, $linodeBucket, $linodeRegion, $linodeAcl);
+                case Storage::DEVICE_WASABI:
+                    $wasabiAccessKey = App::getEnv('_APP_STORAGE_WASABI_ACCESS_KEY', '');
+                    $wasabiSecretKey = App::getEnv('_APP_STORAGE_WASABI_SECRET', '');
+                    $wasabiRegion = App::getEnv('_APP_STORAGE_WASABI_REGION', '');
+                    $wasabiBucket = App::getEnv('_APP_STORAGE_WASABI_BUCKET', '');
+                    $wasabiAcl = 'private';
+                    return new Wasabi($root, $wasabiAccessKey, $wasabiSecretKey, $wasabiBucket, $wasabiRegion, $wasabiAcl);
+            }
         }
     }
 }

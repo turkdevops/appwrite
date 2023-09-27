@@ -3,7 +3,9 @@
 namespace Tests\E2E\Services\Teams;
 
 use Tests\E2E\Client;
-use Utopia\Database\Database;
+use Utopia\Database\DateTime;
+use Utopia\Database\Helpers\ID;
+use Utopia\Database\Validator\Datetime as DatetimeValidator;
 
 trait TeamsBase
 {
@@ -16,8 +18,9 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'teamId' => 'unique()',
-            'name' => 'Arsenal'
+            'teamId' => ID::unique(),
+            'name' => 'Arsenal',
+            'roles' => ['player'],
         ]);
 
         $this->assertEquals(201, $response1['headers']['status-code']);
@@ -25,12 +28,15 @@ trait TeamsBase
         $this->assertEquals('Arsenal', $response1['body']['name']);
         $this->assertGreaterThan(-1, $response1['body']['total']);
         $this->assertIsInt($response1['body']['total']);
-        $this->assertIsInt($response1['body']['$createdAt']);
+        $this->assertArrayHasKey('prefs', $response1['body']);
+
+        $dateValidator = new DatetimeValidator();
+        $this->assertEquals(true, $dateValidator->isValid($response1['body']['$createdAt']));
 
         $teamUid = $response1['body']['$id'];
         $teamName = $response1['body']['name'];
 
-        $teamId = \uniqid();
+        $teamId = ID::unique();
         $response2 = $this->client->call(Client::METHOD_POST, '/teams', array_merge([
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
@@ -45,13 +51,14 @@ trait TeamsBase
         $this->assertEquals('Manchester United', $response2['body']['name']);
         $this->assertGreaterThan(-1, $response2['body']['total']);
         $this->assertIsInt($response2['body']['total']);
-        $this->assertIsInt($response2['body']['$createdAt']);
+        $this->assertArrayHasKey('prefs', $response2['body']);
+        $this->assertEquals(true, $dateValidator->isValid($response2['body']['$createdAt']));
 
         $response3 = $this->client->call(Client::METHOD_POST, '/teams', array_merge([
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'teamId' => 'unique()',
+            'teamId' => ID::unique(),
             'name' => 'Newcastle'
         ]);
 
@@ -60,7 +67,7 @@ trait TeamsBase
         $this->assertEquals('Newcastle', $response3['body']['name']);
         $this->assertGreaterThan(-1, $response3['body']['total']);
         $this->assertIsInt($response3['body']['total']);
-        $this->assertIsInt($response3['body']['$createdAt']);
+        $this->assertEquals(true, $dateValidator->isValid($response3['body']['$createdAt']));
 
         /**
          * Test for FAILURE
@@ -72,6 +79,17 @@ trait TeamsBase
         ]);
 
         $this->assertEquals(400, $response['headers']['status-code']);
+
+        $response = $this->client->call(Client::METHOD_POST, '/teams', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'teamId' => $teamId,
+            'name' => 'John'
+        ]);
+
+        $this->assertEquals(409, $response['headers']['status-code']);
+        $this->assertEquals('team_already_exists', $response['body']['type']);
 
         return ['teamUid' => $teamUid, 'teamName' => $teamName];
     }
@@ -96,7 +114,9 @@ trait TeamsBase
         $this->assertEquals('Arsenal', $response['body']['name']);
         $this->assertGreaterThan(-1, $response['body']['total']);
         $this->assertIsInt($response['body']['total']);
-        $this->assertIsInt($response['body']['$createdAt']);
+        $this->assertArrayHasKey('prefs', $response['body']);
+        $dateValidator = new DatetimeValidator();
+        $this->assertEquals(true, $dateValidator->isValid($response['body']['$createdAt']));
 
         /**
          * Test for FAILURE
@@ -127,25 +147,41 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'limit' => 2,
+            'queries' => [ 'limit(2)' ],
         ]);
 
         $this->assertEquals(200, $response['headers']['status-code']);
-        $this->assertGreaterThan(0, $response['body']['total']);
-        $this->assertIsInt($response['body']['total']);
-        $this->assertCount(2, $response['body']['teams']);
+        $this->assertEquals(2, count($response['body']['teams']));
 
         $response = $this->client->call(Client::METHOD_GET, '/teams', array_merge([
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'offset' => 1,
+            'queries' => [ 'offset(1)' ],
         ]);
 
         $this->assertEquals(200, $response['headers']['status-code']);
-        $this->assertGreaterThan(0, $response['body']['total']);
-        $this->assertIsInt($response['body']['total']);
-        $this->assertGreaterThan(2, $response['body']['teams']);
+        $this->assertGreaterThan(1, count($response['body']['teams']));
+
+        $response = $this->client->call(Client::METHOD_GET, '/teams', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'queries' => [ 'greaterThanEqual("total", 0)' ],
+        ]);
+
+        $this->assertEquals(200, $response['headers']['status-code']);
+        $this->assertGreaterThan(2, count($response['body']['teams']));
+
+        $response = $this->client->call(Client::METHOD_GET, '/teams', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'queries' => [ 'equal("name", ["Arsenal", "Newcastle"])' ],
+        ]);
+
+        $this->assertEquals(200, $response['headers']['status-code']);
+        $this->assertEquals(2, count($response['body']['teams']));
 
         $response = $this->client->call(Client::METHOD_GET, '/teams', array_merge([
             'content-type' => 'application/json',
@@ -190,7 +226,7 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'limit' => 2,
+            'queries' => [ 'limit(2)' ],
         ]);
 
         $this->assertEquals(200, $teams['headers']['status-code']);
@@ -202,8 +238,7 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'limit' => 1,
-            'cursor' => $teams['body']['teams'][0]['$id']
+            'queries' => [ 'limit(1)', 'cursorAfter("' . $teams['body']['teams'][0]['$id'] . '")' ],
         ]);
 
         $this->assertEquals(200, $response['headers']['status-code']);
@@ -216,9 +251,7 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'limit' => 1,
-            'cursor' => $teams['body']['teams'][1]['$id'],
-            'cursorDirection' => Database::CURSOR_BEFORE
+            'queries' => [ 'limit(1)', 'cursorBefore("' . $teams['body']['teams'][1]['$id'] . '")' ],
         ]);
 
         $this->assertEquals(200, $response['headers']['status-code']);
@@ -234,7 +267,7 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'cursor' => 'unknown'
+            'queries' => [ 'cursorAfter("unknown")' ],
         ]);
 
         $this->assertEquals(400, $response['headers']['status-code']);
@@ -251,7 +284,7 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'teamId' => 'unique()',
+            'teamId' => ID::unique(),
             'name' => 'Demo'
         ]);
 
@@ -260,13 +293,13 @@ trait TeamsBase
         $this->assertEquals('Demo', $response['body']['name']);
         $this->assertGreaterThan(-1, $response['body']['total']);
         $this->assertIsInt($response['body']['total']);
-        $this->assertIsInt($response['body']['$createdAt']);
+        $this->assertEquals(true, (new DatetimeValidator())->isValid($response['body']['$createdAt']));
 
         $response = $this->client->call(Client::METHOD_PUT, '/teams/' . $response['body']['$id'], array_merge([
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'teamId' => 'unique()',
+            'teamId' => ID::unique(),
             'name' => 'Demo New'
         ]);
 
@@ -275,7 +308,8 @@ trait TeamsBase
         $this->assertEquals('Demo New', $response['body']['name']);
         $this->assertGreaterThan(-1, $response['body']['total']);
         $this->assertIsInt($response['body']['total']);
-        $this->assertIsInt($response['body']['$createdAt']);
+        $this->assertEquals(true, (new DatetimeValidator())->isValid($response['body']['$createdAt']));
+        $this->assertArrayHasKey('prefs', $response['body']);
 
         /**
          * Test for FAILURE
@@ -300,7 +334,7 @@ trait TeamsBase
             'content-type' => 'application/json',
             'x-appwrite-project' => $this->getProject()['$id'],
         ], $this->getHeaders()), [
-            'teamId' => 'unique()',
+            'teamId' => ID::unique(),
             'name' => 'Demo'
         ]);
 
@@ -311,7 +345,9 @@ trait TeamsBase
         $this->assertEquals('Demo', $response['body']['name']);
         $this->assertGreaterThan(-1, $response['body']['total']);
         $this->assertIsInt($response['body']['total']);
-        $this->assertIsInt($response['body']['$createdAt']);
+        $this->assertArrayHasKey('prefs', $response['body']);
+        $dateValidator = new DatetimeValidator();
+        $this->assertEquals(true, $dateValidator->isValid($response['body']['$createdAt']));
 
         $response = $this->client->call(Client::METHOD_DELETE, '/teams/' . $teamUid, array_merge([
             'content-type' => 'application/json',
@@ -332,5 +368,64 @@ trait TeamsBase
         $this->assertEquals(404, $response['headers']['status-code']);
 
         return [];
+    }
+
+    /**
+     * @depends testCreateTeam
+     */
+    public function testUpdateAndGetUserPrefs(array $data): void
+    {
+        $id = $data['teamUid'] ?? '';
+
+        /**
+         * Test for SUCCESS
+         */
+        $team = $this->client->call(Client::METHOD_PUT, '/teams/' . $id . '/prefs', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'prefs' => [
+                'funcKey1' => 'funcValue1',
+                'funcKey2' => 'funcValue2',
+            ],
+        ]);
+
+        $this->assertEquals($team['headers']['status-code'], 200);
+        $this->assertEquals($team['body']['funcKey1'], 'funcValue1');
+        $this->assertEquals($team['body']['funcKey2'], 'funcValue2');
+
+        $team = $this->client->call(Client::METHOD_GET, '/teams/' . $id . '/prefs', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()));
+
+        $this->assertEquals($team['headers']['status-code'], 200);
+        $this->assertEquals($team['body'], [
+            'funcKey1' => 'funcValue1',
+            'funcKey2' => 'funcValue2',
+        ]);
+
+        $team = $this->client->call(Client::METHOD_GET, '/teams/' . $id, array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()));
+
+        $this->assertEquals($team['headers']['status-code'], 200);
+        $this->assertEquals($team['body']['prefs'], [
+            'funcKey1' => 'funcValue1',
+            'funcKey2' => 'funcValue2',
+        ]);
+
+        /**
+         * Test for FAILURE
+         */
+        $user = $this->client->call(Client::METHOD_PUT, '/teams/' . $id . '/prefs', array_merge([
+            'content-type' => 'application/json',
+            'x-appwrite-project' => $this->getProject()['$id'],
+        ], $this->getHeaders()), [
+            'prefs' => 'bad-string',
+        ]);
+
+        $this->assertEquals($user['headers']['status-code'], 400);
     }
 }

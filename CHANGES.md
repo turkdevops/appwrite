@@ -1,3 +1,293 @@
+# Version 1.4.3
+
+## Features
+- Support for the all new bun runtime [#6230](https://github.com/appwrite/appwrite/pull/6230)
+- Stripe function templates [Console #540](https://github.com/appwrite/console/pull/540)
+
+## Fixes
+- Fix missing _APP_OPENSSL_KEY_V1 in the compose file [#6199](https://github.com/appwrite/appwrite/pull/6199)
+- Fix V2 functions env vars [#6215](https://github.com/appwrite/appwrite/pull/6215)
+- Fix Don't update User Accessed At for Users and Teams APIs [#6222](https://github.com/appwrite/appwrite/pull/6222)
+- Fix Git deploys with S3 [#6227](https://github.com/appwrite/appwrite/pull/6227)
+- Fix manual internal id insertion [#6232](https://github.com/appwrite/appwrite/pull/6232)
+- Fix function timeout [#6235](https://github.com/appwrite/appwrite/pull/6235)
+- Fix collections with datetime attributes migration [#17](https://github.com/utopia-php/migration/pull/17)
+- Fix not all user data being migrated [#17](https://github.com/utopia-php/migration/pull/17)
+- Fix team memberships migration [#16](https://github.com/utopia-php/migration/pull/16)
+- Fix events validation on create/update webhooks [#6219](https://github.com/appwrite/appwrite/pull/6219)
+- Fix schedules task [#6246](https://github.com/appwrite/appwrite/pull/6246)
+- Fix missing keys when updating document via relationship [Database #320](https://github.com/utopia-php/database/pull/320)
+- Fix Discord template [Console #538](https://github.com/appwrite/console/pull/538)
+- Fix form var is url not text [Console #539](https://github.com/appwrite/console/pull/539)
+- Fix incorrect link to migration docs for self-hosted to cloud [Console #543](https://github.com/appwrite/console/pull/543)
+- Fix can't disable smtp [Console #548](https://github.com/appwrite/console/pull/548)
+- Fix create function cover for case where VCS is not enabled [Console #544](https://github.com/appwrite/console/pull/544)
+- Fix users list not re-rendering [Console #537](https://github.com/appwrite/console/pull/537)
+- Fix create attribute modal null when selecting same time twice [Console #549](https://github.com/appwrite/console/pull/549)
+- Fix runtime versions in templates [Console #546](https://github.com/appwrite/console/pull/546)
+
+# Version 1.4.2
+
+## Fixes
+
+- Fix create phone session abuse key [#6134](https://github.com/appwrite/appwrite/pull/6134)
+- Fix CLI backwards compatibility [#6125](https://github.com/appwrite/appwrite/pull/6125)
+- Fix Not Found error when deploying function from git [#6133](https://github.com/appwrite/appwrite/pull/6133)
+- Fix _APP_EXECUTOR_HOST for upgrades [#6141](https://github.com/appwrite/appwrite/pull/6141)
+- Fix create execution request filter from previous SDK version [#6146](https://github.com/appwrite/appwrite/pull/6146)
+- Fix migrations worker [#6116](https://github.com/appwrite/appwrite/pull/6116)
+- Fix: Global variables by [#6150](https://github.com/appwrite/appwrite/pull/6150)
+- Fix webhook secret validation and executor path validation [#6162](https://github.com/appwrite/appwrite/pull/6162)
+- Fix: Untrusted custom domains + auto-ssl [#6155](https://github.com/appwrite/appwrite/pull/6155)
+- Fix: AI Assistant [#6153](https://github.com/appwrite/appwrite/pull/6153)
+
+## Changes
+- Add required params for scheduled functions [#6148](https://github.com/appwrite/appwrite/pull/6148)
+- Update the error message for router_domain_not_configured [#6145](https://github.com/appwrite/appwrite/pull/6145)
+- Override forEachDocument() to skip the cache collection [#6144](https://github.com/appwrite/appwrite/pull/6144)
+- Support for v2 functions [#6142](https://github.com/appwrite/appwrite/pull/6142)
+- Change executor hostname back to appwrite-executor [#6160](https://github.com/appwrite/appwrite/pull/6160)
+- Make URL optional for Create Membership API and Serverside Requests [#6157](https://github.com/appwrite/appwrite/pull/6157)
+
+# Version 1.4.1
+
+## Features
+
+- Add upgrade task [#6068](https://github.com/appwrite/appwrite/pull/6068)
+
+## Fixes
+
+- Fix VCS/migration/assistant scopes [#6071](https://github.com/appwrite/appwrite/pull/6071)
+- Add missing parameters required for custom email templates [#6077](https://github.com/appwrite/appwrite/pull/6077)
+- Fix `Call to a member function label() on null` error when using a custom domain [#6079](https://github.com/appwrite/appwrite/pull/6079)
+
+## Changes
+
+- Update console to 3.0.2 [#6071](https://github.com/appwrite/appwrite/pull/6071)
+
+# Version 1.4.0
+
+## Features
+
+- Add error attribute to indexes and attributes [#4575](https://github.com/appwrite/appwrite/pull/4575)
+- Add new index validation rules [#5710](https://github.com/appwrite/appwrite/pull/5710)
+- Added support for disallowing passwords that contain personal data [#5371](https://github.com/appwrite/appwrite/pull/5371)
+
+## Fixes
+
+- Fix cascading deletes across multiple levels [DB #269](https://github.com/utopia-php/database/pull/269)
+- Fix identical two-way keys not throwing duplicate exceptions [DB #273](https://github.com/utopia-php/database/pull/273)
+- Fix search wildcards [DB #279](https://github.com/utopia-php/database/pull/279)
+- Fix permissions returning as an object instead of list [DB #281](https://github.com/utopia-php/database/pull/281)
+- Fix missing collection not found error [DB #282](https://github.com/utopia-php/database/pull/282)
+
+## Changes
+
+- Improve permission indexes [DB #248](https://github.com/utopia-php/database/pull/248)
+- Validators back-ported to Utopia [#5439](https://github.com/appwrite/appwrite/pull/5439)
+
+# Version 1.3.8
+
+## Changes
+
+- Replace Appwrite executor with OpenRuntimes Executor [#4650](https://github.com/appwrite/appwrite/pull/4650)
+- Add `_APP_CONNECTIONS_MAX` env var [#4673](https://github.com/appwrite/appwrite/pull/4673)
+- Increase Traefik TCP + file limits [#4673](https://github.com/appwrite/appwrite/pull/4673)
+- Store build output file size [#4844](https://github.com/appwrite/appwrite/pull/4844)
+
+## Bugs
+- Fix audit user internal [#5809](https://github.com/appwrite/appwrite/pull/5809)
+
+# Version 1.3.7
+
+## Bugs
+- Fix the routing for the default OAuth2 pages [#5640](https://github.com/appwrite/appwrite/pull/5640) [#5648](https://github.com/appwrite/appwrite/pull/5648)
+- Add support for trailing slashes in Routes and URLs [#5647](https://github.com/appwrite/appwrite/pull/5647) [#5648](https://github.com/appwrite/appwrite/pull/5648)
+
+# Version 1.3.6
+
+## Bugs
+
+- Fix Console deep linking to result in a 404 [#5632](https://github.com/appwrite/appwrite/pull/5632)
+- Fix ACME HTTP Challenge [#5632](https://github.com/appwrite/appwrite/pull/5632)
+
+# Version 1.3.5
+
+## Bugs
+
+- Fix minimum length for string attribute default values [#5606](https://github.com/appwrite/appwrite/pull/5606), [#5602](https://github.com/appwrite/appwrite/pull/5602)
+- Update framework to fix route mismatches [#5603](https://github.com/appwrite/appwrite/pull/5603)
+
+# Version 1.3.4
+
+## Bugs
+
+- Update migration to properly migrate bucket permissions [#5497](https://github.com/appwrite/appwrite/pull/5497)
+
+# Version 1.3.3
+
+## Bugs
+- Fixed migration resetting some data [#5455](https://github.com/appwrite/appwrite/pull/5455)
+
+# Version 1.3.2
+
+## Bugs
+- Fixed auto-setting custom ID on nested documents [#5363](https://github.com/appwrite/appwrite/pull/5363)
+- Fixed listDocuments not returning all the documents [#5395](https://github.com/appwrite/appwrite/pull/5395)
+- Fixed deleting keys, webhooks, platforms and domains after deleting project [#5395](https://github.com/appwrite/appwrite/pull/5395)
+- Fixed empty team prefs returning as JSON object rather array [#5361](https://github.com/appwrite/appwrite/pull/5361)
+
+# Version 1.3.1
+
+## Bugs
+- Fixed Migration issue regarding 500 error [#5356](https://github.com/appwrite/appwrite/pull/5356)
+
+# Version 1.3.0
+
+## Features
+- Password dictionary setting allows to compare user's password against command password database [#4906](https://github.com/appwrite/appwrite/pull/4906)
+- Password history setting allows to save user's last used password so that it may not be used again.  Maximum number of history saved is 20, which can be configured. Minimum is 0 which means disabled. [#4866](https://github.com/appwrite/appwrite/pull/4866)
+- Update APIs to check X-Appwrite-Timestamp header [#5024](https://github.com/appwrite/appwrite/pull/5024)
+- Database relationships [#5238](https://github.com/appwrite/appwrite/pull/5238)
+- New query operators [#5238](https://github.com/appwrite/appwrite/pull/5238)
+- Team preferences [#5196](https://github.com/appwrite/appwrite/pull/5196)
+- Update attribute metadata [#5164](https://github.com/appwrite/appwrite/pull/5164)
+
+## Bugs
+- Fix not storing function's response on response codes 5xx [#4610](https://github.com/appwrite/appwrite/pull/4610)
+- Fix expire to formatTz in create account session [#4985](https://github.com/appwrite/appwrite/pull/4985)
+- Fix deleting projects when organization is deleted [#5335](https://github.com/appwrite/appwrite/pull/5335)
+- Fix deleting collections from a project [#4983](https://github.com/appwrite/appwrite/pull/4983)
+- Fix cleaning up project databases [#4984](https://github.com/appwrite/appwrite/pull/4984)
+- Fix creating documents with attributes with special characters [#246](https://github.com/utopia-php/database/pull/246)
+- Fix deleting attribute not deleting metadata index [#246](https://github.com/utopia-php/database/pull/246)
+- Fix create attribute event payload [#246](https://github.com/utopia-php/database/pull/246)
+
+# Version 1.2.1
+## Changes
+- Upgrade Console to [2.2.0](https://github.com/appwrite/console/releases/tag/2.2.0)
+- Update DBIP Database [#5049](https://github.com/appwrite/appwrite/pull/5049)
+
+## Bugs
+- Fix a few null safety warnings [#4654](https://github.com/appwrite/appwrite/pull/4654)
+- Fix timestamp format in Realtime response [#4515](https://github.com/appwrite/appwrite/pull/4515)
+- Add flutter-web as a platform type [#4992](https://github.com/appwrite/appwrite/pull/4992)
+- Fix typo in Model/Locale.php [#4669](https://github.com/appwrite/appwrite/pull/4669)
+- Fix deletes worker not deleting project database tables [#4984](https://github.com/appwrite/appwrite/pull/4984)
+- Fix deletes worker not deleting database collections [#4983](https://github.com/appwrite/appwrite/pull/4983)
+- Fix restart policy for worker-messaging container [#4994](https://github.com/appwrite/appwrite/pull/4994)
+- Fix validating origin for apple platforms [#5089](https://github.com/appwrite/appwrite/pull/5089)
+
+# Version 1.2.0
+## Features
+- Added GraphQL API [#974](https://github.com/appwrite/appwrite/pull/974)
+- Added GraphQL Explorer [#974](https://github.com/appwrite/appwrite/pull/974)
+- Added ability to set max sessions per user per project [#4831](https://github.com/appwrite/appwrite/pull/4831)
+
+## Changes
+- Get default region from environment on project create [#4780](https://github.com/appwrite/appwrite/pull/4780)
+- Fix french translation [#4782](https://github.com/appwrite/appwrite/pull/4782)
+- Fix max mimetype size [#4814](https://github.com/appwrite/appwrite/pull/4814)
+## Bugs
+- Fix invited account verified status [#4776](https://github.com/appwrite/appwrite/pull/4776)
+
+# Version 1.1.2
+## Changes
+- Released `appwrite/console` [2.0.2](https://github.com/appwrite/console/releases/tag/2.0.2)
+- Make `region` parameter optional with default for project create [#4763](https://github.com/appwrite/appwrite/pull/4763)
+- Add security headers to the console endpoint [#4758](https://github.com/appwrite/appwrite/pull/4758)
+
+## Bugs
+- Fix default oauth paths [#4725](https://github.com/appwrite/appwrite/pull/4725)
+- Fix session expiration, and expired session deletion [#4739](https://github.com/appwrite/appwrite/pull/4739)
+- Fix processing status on sync executions [#4737](https://github.com/appwrite/appwrite/pull/4737)
+- Fix Locale API returning Unknown continent [#4761](https://github.com/appwrite/appwrite/pull/4761)
+
+# Version 1.1.1
+## Bugs
+- Fix Deletes worker using incorrect device for file deletion [#4662](https://github.com/appwrite/appwrite/pull/4662)
+- Fix Migration for Stats adding the region attribute [#4704](https://github.com/appwrite/appwrite/pull/4704)
+- Fix Migration stopping scheduled functions [#4704](https://github.com/appwrite/appwrite/pull/4704)
+- Fix Migration enabling OAuth providers with data by default [#4704](https://github.com/appwrite/appwrite/pull/4704)
+- Fix Error pages when OAuth providers are disabled [#4704](https://github.com/appwrite/appwrite/pull/4704)
+
+# Version 1.1.0
+## Features
+- Added support for the new Appwrite Console [#4655](https://github.com/appwrite/appwrite/pull/4655)
+- Added new property to projects configuration: `authDuration` which allows you to alter the duration of signed in sessions for your project. [#4618](https://github.com/appwrite/appwrite/pull/4618)
+
+## Bugs
+- Fix license detection for Flutter and Dart SDKs [#4435](https://github.com/appwrite/appwrite/pull/4435)
+- Fix missing realtime event for create function deployment [#4574](https://github.com/appwrite/appwrite/pull/4574)
+- Fix missing `status`, `buildStderr` and `buildStderr` from get deployment response [#4611](https://github.com/appwrite/appwrite/pull/4611)
+- Fix project pagination in DB usage aggregation [#4517](https://github.com/appwrite/appwrite/pull/4517)
+- Fix missing file permissions due to cache [#4661](https://github.com/appwrite/appwrite/pull/4661)
+- Fix usage stats for async function executions [#4674](https://github.com/appwrite/appwrite/pull/4674)
+
+# Version 1.0.3
+## Bugs
+- Fix document audit deletion [#4429](https://github.com/appwrite/appwrite/pull/4429)
+- Fix attribute and index deletion when deleting a collection [#4429](https://github.com/appwrite/appwrite/pull/4429)
+
+# Version 1.0.2
+## Bugs
+- Fixed nullable values in functions variables [#3885](https://github.com/appwrite/appwrite/pull/3885)
+- Fixed migration for audit by migrating the `time` attribute [#4038](https://github.com/appwrite/appwrite/pull/4038)
+- Fixed default value for creating Boolean Attribute [#4040](https://github.com/appwrite/appwrite/pull/4040)
+- Fixed phone authentication code to be hashed in the internal database [#3906](https://github.com/appwrite/appwrite/pull/3906)
+- Fixed `/v1/teams/:teamId/memberships/:membershipId` response [#3883](https://github.com/appwrite/appwrite/pull/3883)
+- Fixed removing variables when function is deleted [#3884](https://github.com/appwrite/appwrite/pull/3884)
+- Fixed scheduled function not being triggered [#3908](https://github.com/appwrite/appwrite/pull/3908)
+- Fixed Phone Provider configuration [#3862](https://github.com/appwrite/appwrite/pull/3883)
+- Fixed Queries with `0` values [utopia-php/database#194](https://github.com/utopia-php/database/pull/194)
+
+# Version 1.0.1
+## Bugs
+- Fixed migration for abuse by migrating the `time` attribute [#3839](https://github.com/appwrite/appwrite/pull/3839)
+
+# Version 1.0.0
+## BREAKING CHANGES
+- All Date values are now stored as ISO-8601 instead of UNIX timestamps [#3516](https://github.com/appwrite/appwrite/pull/3516)
+- Permission levels and syntax have been reworked. See the Permissions V2 section in the document for more information [#3700](https://github.com/appwrite/appwrite/pull/3700)
+- Function Variables are now stored in a separate collection with their own API endpoints [#3634](https://github.com/appwrite/appwrite/pull/3634)
+- Resources that are computed asynchronously, such as function deployments, will now return a `202 Accepted` status code instead of `200 OK` [#3547](https://github.com/appwrite/appwrite/pull/3547)
+- Queries have been improved to allow even more flexibility, and introduced to new endpoints. See the Queries V2 section in the document for more information [#3702](https://github.com/appwrite/appwrite/pull/3702)
+- Compound indexes are now more flexible [#151](https://github.com/utopia-php/database/pull/151)
+- `createExecution` parameter `async` default value was changed from `true` to `false` [#3781](https://github.com/appwrite/appwrite/pull/3781)
+- String attribute `status` has been refactored to a Boolean attribute `enabled` in the functions collection [#3798](https://github.com/appwrite/appwrite/pull/3798)
+- `time` attribute in Execution response model has been renamed to `duration` to be more consistent with other response models. [#3801](https://github.com/appwrite/appwrite/pull/3801) 
+- Renamed the following list endpoints to stay consistent with other endpoints [#3825](https://github.com/appwrite/appwrite/pull/3825)
+  - `getMemberships` to `listMemberships` in Teams API
+  - `getMemberships` to `listMemberships` in Users API
+  - `getLogs` to `listLogs` in Users API
+  - `getLogs` to `listLogs` in Accounts API
+  - `getSessions` to `listSessions` in Accounts API
+  - `getSessions` to `listSessions` in Users API
+  - `getCountries` to `listCountries` in Locale API
+  - `getCountriesEU` to `listCountriesEU` in Locale API
+  - `getCountriesPhones` to `listCountriesPhones` in Locale API
+  - `getContinents` to `listContinents` in Locale API
+  - `getCurrencies` to `listCurrencies` in Locale API
+  - `getLanguages` to `listLanguages` in Locale API
+
+## Features
+- Added the UI to see the Parent ID of all resources within the UI. [#3653](https://github.com/appwrite/appwrite/pull/3653)
+- Added automatic cache cleaning for internal Appwrite services [#3491](https://github.com/appwrite/appwrite/pull/3491)
+- Added the ability for Appwrite to handle importing hashed passwords, this can be leveraged to import existing user data from other systems. More information can be found in the document linked above. [#2747](https://github.com/appwrite/appwrite/pull/2747)
+- `Users` has now been renamed to `Authentication` within the Appwrite console [#3664](https://github.com/appwrite/appwrite/pull/3664)
+- More endpoints were made public (for guests) with proper rate limits [#3741](https://github.com/appwrite/appwrite/pull/3741)
+- Added Disqus, Podio, and Etsy OAuth providers [#3526](https://github.com/appwrite/appwrite/pull/3526), [#3488](https://github.com/appwrite/appwrite/pull/3488), [#3522](https://github.com/appwrite/appwrite/pull/3522)
+- Function logs now capture stdout [#3656](https://github.com/appwrite/appwrite/pull/3656)
+- Added the ability to grant guests write permissions for documents, files and executions [#3727](https://github.com/appwrite/appwrite/pull/3727)
+
+## Bugs
+- Fixed an issue where after resetting your password in the Appwrite console, you would not be redirected to the login page. [#3654](https://github.com/appwrite/appwrite/pull/3654)
+- Fixed an issue where invalid data could be loaded into the Appwrite console. [#3660](https://github.com/appwrite/appwrite/pull/3660)
+- Fixed an issue where users using the MySQL adapter for Appwrite would run into an issue with full text indexes [#154](https://github.com/utopia-php/database/pull/154)
+- Fix teams being created with no owners [#3558](https://github.com/appwrite/appwrite/pull/3558)
+- Fixed a bug where you could not search users by phone [#3619](https://github.com/appwrite/appwrite/pull/3619)
+- Fixed a bug where unaccepted invitations would grant access to projects [#3738](https://github.com/appwrite/appwrite/pull/3738)
+
 # Version 0.15.3
 ## Features
 - Added hint during Installation for DNS Configuration by @PineappleIOnic in https://github.com/appwrite/appwrite/pull/2450
